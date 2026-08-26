@@ -1,0 +1,24 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{#
+  این قالب، قالب هم‌نام خودِ جنگو را بازنویسی می‌کند و همان را هم گسترش می‌دهد؛
+  بارگذارِ قالب جنگو نسخه بازنویسی‌شده را از زنجیره جست‌وجو کنار می‌گذارد، پس
+  حلقه بی‌پایان رخ نمی‌دهد.
+
+  پوسته در بلوک extrahead می‌آید نه extrastyle، چون extrastyle پیش از rtl.css
+  بارگذاری می‌شود و اصلاحات راست‌به‌چپ جنگو روی قواعد ما را می‌پوشاند.
+#}
+{% block extrahead %}
+    {{ block.super }}
+    <link rel="stylesheet" href="{% static 'school_admin/css/admin-theme.css' %}">
+{% endblock %}
+
+{% block branding %}
+    <div id="site-name">
+        <a href="{% url 'admin:index' %}">{{ site_header|default:_("مدیریت سامانه مدرسه") }}</a>
+    </div>
+    {% if user.is_anonymous %}
+        {% include "admin/color_theme_toggle.html" %}
+    {% endif %}
+{% endblock %}

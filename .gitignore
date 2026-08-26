@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+../.venv/
+venv/
+
+# Django
+# پایگاه داده در database/ و خروجی وب در public/ — هیچ‌کدام نباید در مخزن باشند.
+/backend/database/
+/backend/public/
+*.sqlite3
+*.sqlite3-journal
+*.log
+
+# assets/ فایل ثابتِ منبع است (پوسته و فونت پنل) و باید در مخزن بماند.
+
+# محیط
+.env
+.env.local
+
+# ابزارها
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ویرایشگر
+.vscode/
+.idea/
+*.swp
+.DS_Store
