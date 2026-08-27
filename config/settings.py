@@ -183,14 +183,14 @@ USE_TZ = True
 # فایل‌های ثابت و آپلودی
 # ---------------------------------------------------------------------------
 STATIC_URL = config("STATIC_URL", default="public/static/")
-STATIC_ROOT = "public" / "static"
+STATIC_ROOT = PUBLIC_DIR / "static"
 
 # پوسته و فونت پنل مدیریت (وزیرمتن، مجوز SIL OFL) اینجا میزبانی می‌شود
 # تا پنل بدون دسترسی به اینترنت هم درست نمایش داده شود.
 STATICFILES_DIRS = [ASSETS_DIR]
 
 MEDIA_URL = config("MEDIA_URL", default="public/media/")
-MEDIA_ROOT = "public" / "media"
+MEDIA_ROOT = PUBLIC_DIR / "media"
 
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
