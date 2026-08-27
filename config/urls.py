@@ -4,10 +4,17 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
+from django.views.decorators.cache import cache_page
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
     SpectacularSwaggerView,
+)
+
+#: قرارداد OpenAPI ۹۰۹ عملیات دارد و ساختش چند ثانیه طول می‌کشد؛ بدون Cache،
+#: هر بار بازکردن Swagger همان هزینه را دوباره می‌دهد.
+_schema_view = cache_page(settings.SCHEMA_CACHE_SECONDS)(
+    SpectacularAPIView.as_view()
 )
 
 api_v1_patterns = [
@@ -30,7 +37,7 @@ urlpatterns = [
     path(settings.ADMIN_URL, admin.site.urls),
     path("api/v1/", include((api_v1_patterns, "v1"), namespace="v1")),
     # ---- مستندات OpenAPI ----
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/schema/", _schema_view, name="schema"),
     path(
         "api/docs/",
         SpectacularSwaggerView.as_view(url_name="schema"),

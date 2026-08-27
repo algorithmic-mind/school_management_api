@@ -1,0 +1,315 @@
+/* ==========================================================================
+   پوسته فارسی پنل مدیریت — سامانه مدیریت مدرسه
+   --------------------------------------------------------------------------
+   این فایل روی CSS استاندارد پنل جنگو سوار می‌شود و سه کار می‌کند:
+
+   ۱. فونت وزیرمتن را به‌صورت محلی می‌نشاند (بدون وابستگی به اینترنت).
+   ۲. متغیرهای رنگ جنگو را با طیف نارنجی سامانه جایگزین می‌کند.
+   ۳. چند اصلاح چیدمانی برای خوانایی راست‌به‌چپ اضافه می‌کند.
+
+   هر سه حالت پوسته پشتیبانی می‌شود: روشن، تیره، و «مطابق سیستم».
+   جنگو برای انتخاب صریح کاربر ویژگی `data-theme` را روی <html> می‌گذارد و در
+   حالت پیش‌فرض چیزی نمی‌گذارد؛ پس هر رنگ باید در هر سه بلوک تعریف شود.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   ۱. فونت وزیرمتن
+   نسخه متغیر یک فایل است و همه وزن‌ها را پوشش می‌دهد؛ نسخه‌های ثابت برای
+   مرورگرهای قدیمی‌تر که فونت متغیر را نمی‌شناسند نگه داشته شده‌اند.
+   مجوز: SIL OFL 1.1 — متن مجوز کنار فایل‌ها در fonts/OFL.txt است.
+   -------------------------------------------------------------------------- */
+@font-face {
+    font-family: "Vazirmatn";
+    src: url("../fonts/Vazirmatn-Variable.f6d31671339d.woff2") format("woff2-variations");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Vazirmatn Static";
+    src: url("../fonts/Vazirmatn-Regular.cdc140628f11.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Vazirmatn Static";
+    src: url("../fonts/Vazirmatn-Medium.dd2193b32cbe.woff2") format("woff2");
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Vazirmatn Static";
+    src: url("../fonts/Vazirmatn-Bold.7958481fe611.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* --------------------------------------------------------------------------
+   ۲. طیف رنگ
+   -------------------------------------------------------------------------- */
+html[data-theme="light"],
+:root {
+    --school-orange-50: #fff4ec;
+    --school-orange-100: #ffe3ce;
+    --school-orange-200: #ffd9b8;
+    --school-orange-300: #ffa76a;
+    --school-orange-400: #fb8b3c;
+    --school-orange-500: #e8690e;
+    --school-orange-600: #c4530a;
+    --school-orange-700: #9c4109;
+    --school-orange-800: #77320a;
+    --school-orange-900: #4e2107;
+
+    /* نسبت کنتراست متن سفید روی این سه رنگ به‌ترتیب ۴٫۵۸، ۶٫۶۲ و ۹٫۳۵ است
+       (همه بالاتر از حد WCAG AA برای متن معمولی). */
+    --primary: var(--school-orange-600);
+    --secondary: var(--school-orange-700);
+    --accent: var(--school-orange-200);
+    --primary-fg: #fff;
+
+    --header-color: var(--school-orange-100);
+    --header-branding-color: var(--accent);
+    --header-bg: var(--secondary);
+    --header-link-color: #fff;
+
+    --breadcrumbs-fg: var(--school-orange-200);
+    --breadcrumbs-link-fg: #fff;
+    --breadcrumbs-bg: var(--school-orange-800);
+
+    --link-fg: var(--school-orange-700);
+    --link-hover-color: var(--school-orange-900);
+    --link-selected-fg: var(--school-orange-800);
+
+    --hairline-color: #f0e7e0;
+    --border-color: #dccfc5;
+
+    --message-warning-bg: var(--school-orange-100);
+
+    --darkened-bg: #fdf7f2;
+    --selected-bg: var(--school-orange-50);
+    --selected-row: var(--school-orange-100);
+
+    --button-fg: #fff;
+    --button-bg: var(--school-orange-600);
+    --button-hover-bg: var(--school-orange-700);
+    --default-button-bg: var(--school-orange-700);
+    --default-button-hover-bg: var(--school-orange-800);
+
+    --object-tools-fg: #fff;
+    --object-tools-bg: var(--school-orange-800);
+    --object-tools-hover-bg: var(--school-orange-900);
+
+    --font-family-primary:
+        "Vazirmatn",
+        "Vazirmatn Static",
+        "Segoe UI",
+        Tahoma,
+        system-ui,
+        sans-serif,
+        "Segoe UI Emoji",
+        "Noto Color Emoji";
+}
+
+/* حالت «مطابق سیستم» — انتخاب صریح کاربر بر آن مقدم است. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --primary: #7a3409;
+        --secondary: var(--school-orange-500);
+        --accent: var(--school-orange-200);
+        --primary-fg: #fdf7f2;
+
+        --header-bg: #572306;
+        --header-color: var(--school-orange-200);
+        --header-link-color: #fff;
+
+        --breadcrumbs-fg: var(--school-orange-200);
+        --breadcrumbs-link-fg: #f3e6dc;
+        --breadcrumbs-bg: var(--primary);
+
+        --link-fg: var(--school-orange-300);
+        --link-hover-color: var(--school-orange-200);
+        --link-selected-fg: var(--school-orange-400);
+
+        --hairline-color: #2b2320;
+        --border-color: #3a2f2a;
+
+        --message-warning-bg: #572306;
+
+        --darkened-bg: #1d1917;
+        --selected-bg: #241c18;
+        --selected-row: var(--school-orange-900);
+
+        --button-bg: var(--school-orange-600);
+        --button-hover-bg: var(--school-orange-500);
+        --default-button-bg: var(--school-orange-600);
+        --default-button-hover-bg: var(--school-orange-500);
+
+        --object-tools-bg: #572306;
+        --object-tools-hover-bg: var(--school-orange-800);
+    }
+}
+
+/* انتخاب صریح «تیره» */
+html[data-theme="dark"] {
+    --primary: #7a3409;
+    --secondary: var(--school-orange-500);
+    --accent: var(--school-orange-200);
+    --primary-fg: #fdf7f2;
+
+    --header-bg: #572306;
+    --header-color: var(--school-orange-200);
+    --header-link-color: #fff;
+
+    --breadcrumbs-fg: var(--school-orange-200);
+    --breadcrumbs-link-fg: #f3e6dc;
+    --breadcrumbs-bg: var(--primary);
+
+    --link-fg: var(--school-orange-300);
+    --link-hover-color: var(--school-orange-200);
+    --link-selected-fg: var(--school-orange-400);
+
+    --hairline-color: #2b2320;
+    --border-color: #3a2f2a;
+
+    --message-warning-bg: #572306;
+
+    --darkened-bg: #1d1917;
+    --selected-bg: #241c18;
+    --selected-row: var(--school-orange-900);
+
+    --button-bg: var(--school-orange-600);
+    --button-hover-bg: var(--school-orange-500);
+    --default-button-bg: var(--school-orange-600);
+    --default-button-hover-bg: var(--school-orange-500);
+
+    --object-tools-bg: #572306;
+    --object-tools-hover-bg: var(--school-orange-800);
+}
+
+/* --------------------------------------------------------------------------
+   ۳. چیدمان و خوانایی
+   -------------------------------------------------------------------------- */
+body,
+input,
+select,
+textarea,
+button,
+.button {
+    font-family: var(--font-family-primary);
+}
+
+/* وزیرمتن نسبت به فونت پیش‌فرض جنگو کوتاه‌تر می‌نشیند؛ ارتفاع سطر را کمی
+   باز می‌کنیم تا کشیده‌ها و اعراب فارسی روی هم نیفتند. */
+body {
+    line-height: 1.7;
+}
+
+#header {
+    padding: 12px 40px;
+}
+
+#branding h1,
+#site-name a {
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+/* شناسه‌ها، کد ملی، تلفن، رایانامه و نشانی همیشه چپ‌به‌راست خوانده می‌شوند؛
+   نمایش راست‌به‌چپ آن‌ها ترتیب ارقام را برای کاربر به‌هم می‌ریزد. */
+input[type="email"],
+input[type="url"],
+input[type="tel"],
+input[type="number"],
+.vUUIDField,
+.field-id .readonly,
+.field-code .readonly,
+.field-national_id .readonly,
+.field-correlation_id .readonly,
+.readonly code,
+code,
+pre,
+.vTextField[dir="ltr"] {
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: plaintext;
+    font-family: var(--font-family-monospace);
+}
+
+/* ستون‌های مبلغ و عدد در فهرست، راست‌چین و تک‌فاصله تا مقایسه چشمی آسان شود. */
+.results td.field-amount,
+.results td.field-total_amount,
+.results td.field-balance,
+.results td.field-version,
+.results td.field-quantity {
+    font-family: var(--font-family-monospace);
+    font-variant-numeric: tabular-nums;
+}
+
+/* عنوان ماژول‌ها در صفحه اصلی */
+.module h2,
+.module caption,
+.inline-group h2 {
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
+/* حلقه فوکوس با رنگ پوسته — پیش‌فرض جنگو آبی سیستمی است و با نارنجی نمی‌خواند. */
+:is(input, select, textarea, button, a, summary):focus-visible {
+    outline: 2px solid var(--school-orange-500);
+    outline-offset: 2px;
+}
+
+/* دکمه‌ها و کارت‌ها کمی نرم‌تر */
+.button,
+input[type="submit"],
+input[type="button"],
+.submit-row input,
+a.button {
+    border-radius: 6px;
+}
+
+.module {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* صفحه ورود */
+.login #header {
+    border-radius: 8px 8px 0 0;
+}
+
+.login #container {
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgb(78 33 7 / 12%);
+}
+
+.login .submit-row input[type="submit"] {
+    width: 100%;
+}
+
+/* نوار کناری راست‌به‌چپ: جداکننده باید سمت چپ ستون بنشیند. */
+[dir="rtl"] #nav-sidebar {
+    border-left: 1px solid var(--hairline-color);
+    border-right: none;
+}
+
+/* پیام‌های سامانه */
+.messagelist li {
+    border-radius: 6px;
+}
+
+/* جدول فهرست: سطر انتخاب‌شده و سرستون‌ها */
+#changelist table thead th {
+    font-weight: 600;
+}
+
+#changelist-filter h2,
+#changelist-filter h3 {
+    font-weight: 600;
+}

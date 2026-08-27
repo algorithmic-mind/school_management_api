@@ -41,6 +41,8 @@ cd backend && python manage.py runserver
 **مستندات فرانت‌اند:**
 [راهنمای وب‌سرویس](./docs/API_GUIDE_FA.md) · [سناریوهای کاربردی](./docs/API_RECIPES_FA.md)
 
+**استقرار:** [راهنمای استقرار و nginx](./docs/DEPLOYMENT_FA.md)
+
 ---
 
 ## دستورات مدیریتی
@@ -260,7 +262,16 @@ backend/
 می‌شوند. `assets/` منبع است و باید در مخزن بماند.
 
 چون پایگاه داده و کد بیرون از `public/` هستند، پیکربندی اشتباه وب‌سرور هم
-نمی‌تواند آن‌ها را افشا کند. در nginx فقط دو مسیر زیر را بدهید:
+نمی‌تواند آن‌ها را افشا کند. با `DEBUG=False` فایل‌های ثابت از `public/static/` خوانده می‌شوند، پس
+`collectstatic` یک مرحله **اجباری** استقرار است:
+
+```bash
+cd backend && python manage.py collectstatic --noinput
+```
+
+`whitenoise` در میان‌افزار هست، یعنی اگر وب‌سرور مسیر `/static/` را تنظیم نکرده
+باشد خود Django جواب می‌دهد و پنل و Swagger سالم می‌مانند. با این حال سپردن
+`/static/` به وب‌سرور سریع‌تر است — در nginx فقط دو مسیر زیر را بدهید:
 
 ```
 location /static/ { alias /srv/school/backend/public/static/; }
@@ -287,6 +298,7 @@ location /media/  { alias /srv/school/backend/public/media/;  }
 | `DATABASE_DIR` / `PUBLIC_DIR` | کنار پروژه | برای جابه‌جایی به مسیر مطلق |
 | `USE_X_FORWARDED_PROTO` | `False` | پشت nginx/traefik حتماً `True` |
 | `LOG_LEVEL` | `INFO` | `DEBUG` تا `ERROR` |
+| `SCHEMA_CACHE_SECONDS` | `900` | کش قرارداد OpenAPI؛ صفر = خاموش |
 | `JWT_ACCESS_MINUTES` | `30` | عمر توکن دسترسی |
 | `JWT_REFRESH_DAYS` | `7` | عمر توکن تازه‌سازی |
 

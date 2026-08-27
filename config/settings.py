@@ -49,6 +49,9 @@ CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
 #: مسیر پنل مدیریت. در عملیات تغییرش بدهید تا هدف اسکنرهای خودکار نباشد.
 ADMIN_URL = config("ADMIN_URL", default="admin/").strip("/") + "/"
 
+#: مدت نگهداری قرارداد OpenAPI در Cache (ثانیه). صفر یعنی خاموش.
+SCHEMA_CACHE_SECONDS = config("SCHEMA_CACHE_SECONDS", default=900, cast=int)
+
 # ---------------------------------------------------------------------------
 # اپلیکیشن‌ها — هر اپ معادل یک Bounded Context در بخش ۶.۱ سند تحلیل است.
 # ---------------------------------------------------------------------------
@@ -89,6 +92,11 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # فایل‌های ثابت را با DEBUG=False هم خود Django سرو می‌کند.
+    # بدون این، اگر وب‌سرور مسیر /static/ را درست تنظیم نکرده باشد، پنل مدیریت
+    # بی‌استایل و Swagger/ReDoc صفحه سفید می‌شوند.
+    # جایش باید دقیقاً اینجا باشد: بعد از SecurityMiddleware و قبل از بقیه.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -183,6 +191,24 @@ STATICFILES_DIRS = [ASSETS_DIR]
 
 MEDIA_URL = config("MEDIA_URL", default="media/")
 MEDIA_ROOT = PUBLIC_DIR / "media"
+
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        # فشرده‌سازی + نام هش‌دار برای Cache Busting.
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+#: فایلی که در Manifest نیست، به‌جای خطای ۵۰۰ با نام اصلی سرو می‌شود.
+#: بعضی از CSSهای ثالث به فایل‌های ناموجود ارجاع می‌دهند و نباید کل صفحه را
+#: از کار بیندازند.
+WHITENOISE_MANIFEST_STRICT = False
+
+#: در توسعه، WhiteNoise فایل‌ها را مستقیم از assets/ می‌خواند تا نیازی به
+#: اجرای collectstatic بعد از هر تغییر پوسته نباشد.
+WHITENOISE_USE_FINDERS = DEBUG
+WHITENOISE_AUTOREFRESH = DEBUG
 
 #: سقف حجم آپلود که در حافظه نگه داشته می‌شود (بایت)؛ بیشتر از آن روی دیسک.
 DATA_UPLOAD_MAX_MEMORY_SIZE = config(
