@@ -2,7 +2,7 @@
 
 ---
 
-## دو مشکل روی `school.amirkho.ir`
+## مشکلات دیده‌شده روی `school.amirkho.ir`
 
 ### ۱. فایل‌های ثابت سرو نمی‌شوند — علت صفحه سفید Swagger و پنل بی‌استایل
 
@@ -69,6 +69,96 @@ python -c "from django.core.management.utils import get_random_secret_key as k; 
 > تغییر `SECRET_KEY` نشست‌های فعال و لینک‌های بازیابی گذرواژه را باطل می‌کند؛
 > کاربران باید دوباره وارد شوند. توکن‌های JWT هم باطل می‌شوند.
 
+**وضعیت فعلی:** `DEBUG` خاموش شده — صفحه ۴۰۴ سایت دیگر جزئیات فنی نشان
+نمی‌دهد. اگر هنوز `SECRET_KEY` را عوض نکرده‌اید، انجامش بدهید.
+
+### ۳. خطای «CSRF تأیید نشد» هنگام ورود به پنل
+
+پشت nginx، مرورگر روی HTTPS فرم را می‌فرستد و هدر `Origin` هم
+`https://school.amirkho.ir` است. اما اگر Django هدر `X-Forwarded-Proto` را باور
+نکند، خودش را روی HTTP می‌بیند و مبدأ مورد انتظارش می‌شود
+`http://school.amirkho.ir`. این دو یکی نیستند، پس درخواست با ۴۰۳ رد می‌شود.
+
+بازتولیدشده و تأییدشده:
+
+```
+DEBUG=False, ALLOWED_HOSTS=['school.amirkho.ir'],
+CSRF_TRUSTED_ORIGINS خالی, SECURE_PROXY_SSL_HEADER=None
+   POST /admin/login/  →  403 ❌
+```
+
+**اصلاح سمت کد:** اگر `CSRF_TRUSTED_ORIGINS` خالی باشد، حالا خودکار از
+`DJANGO_ALLOWED_HOSTS` ساخته می‌شود. دامنه‌ای که به‌عنوان میزبان مجاز اعلام
+کرده‌اید، منطقاً مبدأ مورد اعتماد فرم‌های خودش هم هست:
+
+```
+ALLOWED_HOSTS=['school.amirkho.ir']
+   → CSRF_TRUSTED_ORIGINS = ['https://school.amirkho.ir']
+   POST /admin/login/  →  ۲۰۰ ✅
+```
+
+در حالت توسعه هر دو `http` و `https` اضافه می‌شوند؛ در عملیات فقط `https`.
+
+**اما `USE_X_FORWARDED_PROTO=True` را هم بگذارید.** بدون آن Django همچنان
+خودش را روی HTTP می‌بیند و این‌ها خراب می‌مانند:
+
+- `request.is_secure()` نادرست است
+- `SECURE_SSL_REDIRECT` یا کار نمی‌کند یا حلقه می‌سازد
+- نشانی‌های مطلقی که Django می‌سازد با `http://` شروع می‌شوند
+
+روی سرور فعلی `http://school.amirkho.ir/admin/login/` بدون ریدایرکت ۲۰۰
+می‌دهد، یعنی `SECURE_SSL_REDIRECT` خاموش است. بعد از تنظیم
+`USE_X_FORWARDED_PROTO=True` می‌توانید با خیال راحت روشنش کنید.
+
+مطمئن شوید nginx واقعاً این هدر را می‌فرستد:
+
+```nginx
+proxy_set_header Host              $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP         $remote_addr;
+```
+
+### ۴. دکمه Try it out در Swagger به `localhost:8000` درخواست می‌زند
+
+روی دامنه عملیاتی، Swagger این را نشان می‌داد:
+
+```
+Request URL: http://localhost:8000/api/v1/iam/persons/
+Failed to fetch — URL scheme must be "http" or "https" for CORS request.
+```
+
+علتش یک فهرست ثابت در تنظیمات بود:
+
+```python
+"SERVERS": [
+    {"url": "http://localhost:8000", "description": "توسعه محلی"},   ← اولی انتخاب می‌شد
+    {"url": "https://api.example.school", "description": "محیط عملیاتی"},
+],
+```
+
+Swagger همیشه اولین سرور فهرست را برمی‌داشت، فارغ از اینکه صفحه از کجا باز
+شده باشد.
+
+**اصلاح:** فهرست حالا خالی است. طبق استاندارد OpenAPI 3، نبودِ `servers` یعنی
+مبدأ نسبی (`"/"`)؛ پس Swagger و ReDoc همان دامنه‌ای را صدا می‌زنند که خودشان
+از آن باز شده‌اند:
+
+| صفحه باز شده از | درخواست به |
+|---|---|
+| `http://localhost:8000/api/docs/` | `http://localhost:8000/api/v1/...` |
+| `https://school.amirkho.ir/api/docs/` | `https://school.amirkho.ir/api/v1/...` |
+
+بدون هیچ تنظیمی، در هر دو محیط درست است. اگر جایی به نشانی مطلق نیاز داشتید
+(تولید کلاینت، Postman) با `API_SERVERS` در `.env` پرش کنید:
+
+```bash
+API_SERVERS=https://school.amirkho.ir|محیط عملیاتی
+```
+
+> `docs/openapi.yaml` و `docs/openapi.json` هم بازتولید شدند و دیگر سرور ثابت
+> ندارند.
+
 ---
 
 ## اصلاح سمت کد (انجام شد)
@@ -111,9 +201,16 @@ git pull && pip install -r backend/requirements.txt
 DJANGO_DEBUG=False
 DJANGO_SECRET_KEY=<کلید تازه‌ای که بالا ساختید>
 DJANGO_ALLOWED_HOSTS=school.amirkho.ir
-CSRF_TRUSTED_ORIGINS=https://school.amirkho.ir
 CORS_ALLOWED_ORIGINS=https://school.amirkho.ir
 USE_X_FORWARDED_PROTO=True
+SECURE_SSL_REDIRECT=True
+
+# نشانی فایل‌های ثابت — مطابق پیکربندی nginx شما (گام ۴)
+STATIC_URL=public/static/
+MEDIA_URL=public/media/
+
+# CSRF_TRUSTED_ORIGINS لازم نیست؛ اگر خالی بماند از ALLOWED_HOSTS ساخته می‌شود.
+# فقط اگر دامنه‌ای بیرون از ALLOWED_HOSTS باید فرم بفرستد، صریح بنویسیدش.
 ```
 
 `USE_X_FORWARDED_PROTO=True` را حتماً بگذارید. nginx خودش TLS را تمام می‌کند و
@@ -223,6 +320,8 @@ curl -s https://school.amirkho.ir/api/docs/ | grep -oE 'src="[^"]+"'
 | بررسی | انتظار |
 |---|---|
 | نشانی استاتیک (مطابق `STATIC_URL`) | ۲۰۰ |
+| ورود به پنل | بدون خطای CSRF |
+| Try it out در Swagger | درخواست به `https://school.amirkho.ir`، نه localhost |
 | `/api/docs/` | صفحه Swagger با ظاهر کامل |
 | `/api/redoc/` | صفحه ReDoc با ظاهر کامل |
 | `/admin/` | پنل با پوسته نارنجی و فونت وزیرمتن |

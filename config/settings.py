@@ -44,13 +44,59 @@ ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", ca
 
 #: مبدأهایی که فرم و درخواست POST آن‌ها مورد اعتماد است (پنل پشت HTTPS).
 #: باید با پروتکل نوشته شود: https://panel.example.school
+#:
+#: اگر خالی بماند از `DJANGO_ALLOWED_HOSTS` ساخته می‌شود. دلیلش یک خطای رایج
+#: استقرار است: دامنه در ALLOWED_HOSTS هست ولی در CSRF_TRUSTED_ORIGINS نیست، و
+#: ورود به پنل با «CSRF تأیید نشد» رد می‌شود. دامنه‌ای که به‌عنوان میزبان مجاز
+#: اعلام شده، منطقاً مبدأ مورد اعتماد فرم‌های خودش هم هست.
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
+
+
+def _origins_from_hosts(hosts: list[str], *, include_http: bool) -> list[str]:
+    """`ALLOWED_HOSTS` را به مبدأهای CSRF ترجمه می‌کند."""
+    origins: list[str] = []
+    for host in hosts:
+        host = host.strip()
+        if not host or host == "*":
+            continue  # از «همه میزبان‌ها» نمی‌توان مبدأ مشخصی ساخت
+        # `.example.com` در ALLOWED_HOSTS یعنی همه زیردامنه‌ها
+        pattern = f"*{host}" if host.startswith(".") else host
+        schemes = ("https", "http") if include_http else ("https",)
+        for scheme in schemes:
+            origin = f"{scheme}://{pattern}"
+            if origin not in origins:
+                origins.append(origin)
+    return origins
+
+
+if not CSRF_TRUSTED_ORIGINS:
+    # در توسعه http هم لازم است؛ در عملیات فقط https اعتماد می‌شود.
+    CSRF_TRUSTED_ORIGINS = _origins_from_hosts(ALLOWED_HOSTS, include_http=DEBUG)
 
 #: مسیر پنل مدیریت. در عملیات تغییرش بدهید تا هدف اسکنرهای خودکار نباشد.
 ADMIN_URL = config("ADMIN_URL", default="admin/").strip("/") + "/"
 
 #: مدت نگهداری قرارداد OpenAPI در Cache (ثانیه). صفر یعنی خاموش.
 SCHEMA_CACHE_SECONDS = config("SCHEMA_CACHE_SECONDS", default=900, cast=int)
+
+#: سرورهایی که در قرارداد OpenAPI اعلام می‌شوند و در Swagger قابل انتخاب‌اند.
+#:
+#: پیش‌فرض عمداً خالی است. وقتی قرارداد هیچ `servers` اعلام نکند، Swagger و
+#: ReDoc همان مبدأیی را صدا می‌زنند که خودشان از آن باز شده‌اند؛ یعنی روی
+#: `localhost:8000` می‌شود localhost و روی دامنه عملیاتی می‌شود همان دامنه،
+#: بدون هیچ تنظیمی. نشانی ثابت در این فهرست دقیقاً همان چیزی است که باعث
+#: می‌شود دکمه Try it out روی سرور عملیاتی به `localhost` درخواست بزند.
+#:
+#: فقط اگر قرارداد را جای دیگری مصرف می‌کنید (تولید کلاینت، Postman) و به
+#: نشانی مطلق نیاز دارید، پرش کنید. قالب هر مورد:
+#:     https://school.amirkho.ir|محیط عملیاتی
+API_SERVERS = [
+    {"url": url, "description": description}
+    for url, _, description in (
+        item.partition("|") for item in config("API_SERVERS", default="", cast=Csv())
+    )
+    if url
+]
 
 # ---------------------------------------------------------------------------
 # اپلیکیشن‌ها — هر اپ معادل یک Bounded Context در بخش ۶.۱ سند تحلیل است.
@@ -322,10 +368,8 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "SORT_OPERATIONS": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
-    "SERVERS": [
-        {"url": "http://localhost:8000", "description": "توسعه محلی"},
-        {"url": "https://api.example.school", "description": "محیط عملیاتی"},
-    ],
+    # خالی گذاشتنش عمدی است — توضیح کنار API_SERVERS در بالای همین فایل.
+    "SERVERS": API_SERVERS,
     "TAGS": [
         {"name": "Auth", "description": "ورود، تازه‌سازی توکن، پروفایل و Context کاری"},
         {"name": "IAM", "description": "اشخاص، کاربران، نقش، مجوز و ممیزی دسترسی"},

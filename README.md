@@ -299,6 +299,7 @@ location /media/  { alias /srv/school/backend/public/media/;  }
 | `USE_X_FORWARDED_PROTO` | `False` | پشت nginx/traefik حتماً `True` |
 | `LOG_LEVEL` | `INFO` | `DEBUG` تا `ERROR` |
 | `SCHEMA_CACHE_SECONDS` | `900` | کش قرارداد OpenAPI؛ صفر = خاموش |
+| `API_SERVERS` | خالی | سرورهای قرارداد؛ خالی = هم‌مبدأ با صفحه مستندات |
 | `JWT_ACCESS_MINUTES` | `30` | عمر توکن دسترسی |
 | `JWT_REFRESH_DAYS` | `7` | عمر توکن تازه‌سازی |
 
