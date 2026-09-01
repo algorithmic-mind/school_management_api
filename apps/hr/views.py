@@ -64,6 +64,9 @@ class OrgUnitViewSet(BaseModelViewSet):
     filterset_fields = ("campus", "parent")
     search_fields = ("title", "code")
     permission_resource = "employee"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
 
 
 @extend_schema_view(list=extend_schema(tags=["HR"], summary="پست‌های سازمانی"))
@@ -73,6 +76,9 @@ class PositionViewSet(BaseModelViewSet):
     filterset_fields = ("org_unit", "position_type")
     search_fields = ("title", "code")
     permission_resource = "employee"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "org_unit__campus__school"
+    campus_field = "org_unit__campus"
 
 
 class EmployeeFilter(filters.FilterSet):
@@ -114,6 +120,8 @@ class EmployeeViewSet(BaseModelViewSet):
         "person__national_id",
     )
     permission_resource = "employee"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "person"
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -163,6 +171,8 @@ class EmploymentContractViewSet(BaseModelViewSet):
     serializer_class = EmploymentContractSerializer
     filterset_fields = ("employee", "contract_type", "status")
     permission_resource = "contract"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "employee__person"
     permission_map = {"activate": "contract.update", "close": "contract.close"}
 
     @extend_schema(
@@ -215,6 +225,9 @@ class EmployeeAssignmentViewSet(BaseModelViewSet):
     serializer_class = EmployeeAssignmentSerializer
     filterset_fields = ("employee", "position", "campus", "is_primary")
     permission_resource = "employee"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
 
 
 @extend_schema_view(
@@ -233,6 +246,8 @@ class TeacherProfileViewSet(BaseModelViewSet):
         "specialization",
     )
     permission_resource = "employee"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "employee__person"
 
     @extend_schema(
         tags=["HR"],
@@ -279,6 +294,8 @@ class TeacherQualificationViewSet(BaseModelViewSet):
     serializer_class = TeacherQualificationSerializer
     filterset_fields = ("teacher_profile", "course", "grade_level", "status")
     permission_resource = "teaching_assignment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course__school"
 
 
 @extend_schema_view(
@@ -302,6 +319,12 @@ class TeachingAssignmentViewSet(BaseModelViewSet):
     serializer_class = TeachingAssignmentSerializer
     filterset_fields = ("course_offering", "teacher_profile", "responsibility")
     permission_resource = "teaching_assignment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -342,6 +365,9 @@ class WorkShiftViewSet(BaseModelViewSet):
     serializer_class = WorkShiftSerializer
     filterset_fields = ("campus",)
     permission_resource = "employee"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
 
 
 @extend_schema_view(
@@ -368,6 +394,8 @@ class LeaveRequestViewSet(BaseModelViewSet):
     filterset_fields = ("employee", "leave_type", "status")
     ordering_fields = ("starts_at",)
     permission_resource = "leave"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "employee__person"
     permission_map = {
         "submit": "leave.create",
         "approve": "leave.approve",
@@ -460,6 +488,8 @@ class PayrollRunViewSet(BaseModelViewSet):
     serializer_class = PayrollRunSerializer
     filterset_fields = ("school", "status")
     permission_resource = "payroll"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
     permission_map = {"calculate": "payroll.run", "approve": "payroll.approve"}
 
     @extend_schema(
@@ -544,6 +574,9 @@ class PayslipViewSet(BaseModelViewSet):
     serializer_class = PayslipSerializer
     filterset_fields = ("payroll_run", "employee", "status")
     permission_resource = "payroll"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "payroll_run__school"
+    self_person_field = "employee__person"
     http_method_names = ["get", "post", "head", "options"]
 
     def perform_destroy(self, instance):  # pragma: no cover - محافظ

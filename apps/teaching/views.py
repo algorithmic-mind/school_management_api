@@ -120,6 +120,12 @@ class TeachingSessionViewSet(BaseModelViewSet):
     filterset_class = TeachingSessionFilter
     ordering_fields = ("starts_at",)
     permission_resource = "session"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
     permission_map = {
         "cancel": "session.cancel",
         "roster": "attendance.read",
@@ -398,6 +404,12 @@ class SessionTeacherViewSet(BaseModelViewSet):
     serializer_class = SessionTeacherSerializer
     filterset_fields = ("session", "teacher_profile", "duty")
     permission_resource = "session"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "session__course_offering__course__school"
+    campus_field = "session__course_offering__class_group__campus"
+    academic_year_field = "session__course_offering__term__academic_year"
+    class_group_field = "session__course_offering__class_group"
+    course_offering_field = "session__course_offering"
 
 
 class AttendanceRecordFilter(filters.FilterSet):
@@ -430,6 +442,13 @@ class AttendanceRecordViewSet(BaseModelViewSet):
     serializer_class = AttendanceRecordSerializer
     filterset_class = AttendanceRecordFilter
     permission_resource = "attendance"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    class_group_field = "session__course_offering__class_group"
+    course_offering_field = "session__course_offering"
+    self_student_field = "enrollment__student"
     permission_map = {"amend": "attendance.update"}
 
     @extend_schema(
@@ -592,6 +611,13 @@ class AbsenceJustificationViewSet(BaseModelViewSet):
     serializer_class = AbsenceJustificationSerializer
     filterset_fields = ("decision",)
     permission_resource = "attendance"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "attendance__enrollment__campus__school"
+    campus_field = "attendance__enrollment__campus"
+    academic_year_field = "attendance__enrollment__academic_year"
+    class_group_field = "attendance__session__course_offering__class_group"
+    course_offering_field = "attendance__session__course_offering"
+    self_student_field = "attendance__enrollment__student"
     permission_map = {"approve": "attendance.justify", "reject": "attendance.justify"}
 
     @extend_schema(
@@ -641,6 +667,12 @@ class LessonPlanViewSet(BaseModelViewSet):
     filterset_fields = ("course_offering", "session", "status")
     search_fields = ("title",)
     permission_resource = "resource"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
 
 
 @extend_schema_view(
@@ -656,6 +688,12 @@ class AssignmentViewSet(BaseModelViewSet):
     ordering_fields = ("due_at", "created_at")
     search_fields = ("title",)
     permission_resource = "assignment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
     permission_map = {"publish": "assignment.publish", "close": "assignment.update"}
 
     @extend_schema(
@@ -705,6 +743,13 @@ class AssignmentSubmissionViewSet(BaseModelViewSet):
     serializer_class = AssignmentSubmissionSerializer
     filterset_fields = ("assignment", "enrollment", "status", "is_late")
     permission_resource = "assignment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    class_group_field = "assignment__course_offering__class_group"
+    course_offering_field = "assignment__course_offering"
+    self_student_field = "enrollment__student"
     permission_map = {"submit": "assignment.update", "grade": "assignment.grade"}
 
     @extend_schema(
@@ -803,6 +848,13 @@ class SubmissionFeedbackViewSet(BaseModelViewSet):
     serializer_class = SubmissionFeedbackSerializer
     filterset_fields = ("submission", "is_final")
     permission_resource = "assignment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "submission__enrollment__campus__school"
+    campus_field = "submission__enrollment__campus"
+    academic_year_field = "submission__enrollment__academic_year"
+    class_group_field = "submission__assignment__course_offering__class_group"
+    course_offering_field = "submission__assignment__course_offering"
+    self_student_field = "submission__enrollment__student"
 
 
 @extend_schema_view(list=extend_schema(tags=["Teaching"], summary="منابع آموزشی"))
@@ -812,3 +864,9 @@ class LearningResourceViewSet(BaseModelViewSet):
     filterset_fields = ("course_offering", "resource_type", "visibility")
     search_fields = ("title",)
     permission_resource = "resource"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"

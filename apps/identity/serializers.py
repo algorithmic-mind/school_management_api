@@ -6,7 +6,10 @@ from django.contrib.auth import authenticate
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.serializers import (
+    TokenObtainPairSerializer,
+    TokenRefreshSerializer,
+)
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.serializers import AUDIT_FIELDS
@@ -403,6 +406,19 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     )
 
 
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    تأیید بازیابی رمز با توکن دریافتی.
+
+    اعتبارسنجی خود توکن در View انجام می‌شود، چون تا کاربر مشخص نشود
+    `validate_password` مرجعی برای کنترل شباهت رمز به نام کاربری ندارد.
+    """
+
+    uid = serializers.CharField(help_text="پارامتر uid لینک بازیابی")
+    token = serializers.CharField(help_text="پارامتر token لینک بازیابی")
+    new_password = serializers.CharField(write_only=True, min_length=10)
+
+
 # ---------------------------------------------------------------------------
 # ورود و Context
 # ---------------------------------------------------------------------------
@@ -412,7 +428,38 @@ class ScopeContextSerializer(serializers.Serializer):
     roleCode = serializers.CharField()
     roleTitle = serializers.CharField()
     scopeType = serializers.CharField()
+    scopeTypeDisplay = serializers.CharField(required=False)
     scopeId = serializers.UUIDField(allow_null=True)
+    scopeTitle = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="نام خواندنی دامنه (نام مدرسه، شعبه، سال…) برای صفحه انتخاب محیط کاری",
+    )
+    schoolId = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="مدرسه‌ای که این محیط کاری به آن تعلق دارد؛ مقدار هدر X-School-Id",
+    )
+    campusId = serializers.UUIDField(required=False, allow_null=True)
+    academicYearId = serializers.UUIDField(required=False, allow_null=True)
+
+
+class WorkingContextSerializer(serializers.Serializer):
+    """
+    پاسخ «محیط‌های کاری من».
+
+    فرانت با `contexts` صفحه `/select-context` را می‌سازد و با `headers` هر
+    مورد، دقیقاً می‌داند چه هدرهایی را در درخواست‌های بعدی بفرستد — بدون
+    اینکه لازم باشد نگاشت نوع دامنه به نام هدر را خودش بداند.
+    """
+
+    defaultContext = ScopeContextSerializer(allow_null=True)
+    contexts = ScopeContextSerializer(many=True)
+    schools = serializers.ListField(child=serializers.DictField())
+    headers = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="نام هدرهای Context کاری",
+    )
 
 
 class LoginSerializer(serializers.Serializer):
@@ -433,18 +480,63 @@ class TokenPairSerializer(serializers.Serializer):
 
 
 class ContextTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """توکن را با اطلاعات Tenant و نقش‌ها غنی می‌کند."""
+    """
+    توکن را با اطلاعات Tenant، نقش‌ها و نسخه ابطال غنی می‌کند.
+
+    `token_version` را :mod:`apps.identity.authentication` در هر درخواست
+    بررسی می‌کند؛ بدون آن، ابطال سمت سرور ممکن نیست.
+    """
 
     @classmethod
     def get_token(cls, user):
+        from apps.identity.authentication import TOKEN_VERSION_CLAIM
+
         token = super().get_token(user)
         token["tenant_id"] = str(user.tenant_id) if user.tenant_id else None
         token["person_id"] = str(user.person_id) if user.person_id else None
         token["username"] = user.username
+        token[TOKEN_VERSION_CLAIM] = int(user.token_version or 1)
         token["roles"] = sorted(
             {a["role__code"] for a in user.get_effective_scopes()}
         )
         return token
+
+
+class VersionedTokenRefreshSerializer(TokenRefreshSerializer):
+    """
+    تازه‌سازی توکن با احترام به ابطال سمت سرور.
+
+    `TokenRefreshSerializer` استاندارد فقط امضا و انقضای Refresh را می‌بیند،
+    پس پس از خروج یا تغییر رمز همچنان توکن دسترسی تازه صادر می‌کند. آن توکن
+    در نخستین درخواست رد می‌شود، ولی فرانت یک رفت‌وبرگشت را هدر داده و پیام
+    روشنی هم نگرفته است. اینجا همان کنترل نسخه، سرِ خودِ تازه‌سازی انجام
+    می‌شود تا پاسخ صریح باشد: «دوباره وارد شوید».
+    """
+
+    def validate(self, attrs):
+        from rest_framework_simplejwt.exceptions import InvalidToken
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        from apps.identity.authentication import TOKEN_VERSION_CLAIM
+        from apps.identity.models import UserAccount
+
+        refresh = RefreshToken(attrs["refresh"])
+        claimed = refresh.get(TOKEN_VERSION_CLAIM)
+        if claimed is not None:
+            user_id = refresh.get("user_id")
+            current = (
+                UserAccount.objects.filter(pk=user_id)
+                .values_list("token_version", flat=True)
+                .first()
+            )
+            if current is None or int(claimed) != int(current or 1):
+                raise InvalidToken(
+                    {
+                        "detail": "این نشست باطل شده است؛ دوباره وارد شوید.",
+                        "code": "token_revoked",
+                    }
+                )
+        return super().validate(attrs)
 
 
 class CurrentUserSerializer(serializers.Serializer):

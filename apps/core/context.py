@@ -31,6 +31,10 @@ class RequestContext:
     idempotency_key: str = ""
     permissions: set[str] = field(default_factory=set)
     scopes: list[dict[str, Any]] = field(default_factory=list)
+    #: محدوده مؤثر داده، ساخته‌شده از `scopes`
+    #: (:class:`apps.identity.scopes.EffectiveScope`). لایه Queryset با این
+    #: شیء فیلتر می‌کند، نه با هدرهای خام درخواست.
+    effective_scope: Any = None
     is_superuser: bool = False
     client_ip: str = ""
     user_agent: str = ""

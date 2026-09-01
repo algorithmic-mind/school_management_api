@@ -4,12 +4,18 @@ from __future__ import annotations
 
 from django.apps import apps as django_apps
 from django.db import connection
-from drf_spectacular.utils import OpenApiExample, extend_schema
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+)
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.dashboard import build_dashboard
 from apps.core.serializers import ErrorResponseSerializer
 
 
@@ -215,3 +221,87 @@ class ModuleMapView(APIView):
                 }
             )
         return Response(result)
+
+
+@extend_schema(
+    tags=["Reports"],
+    summary="داشبورد نقش‌محور",
+    description=(
+        "همه ویجت‌های صفحه اصلی در یک درخواست (بخش ۱۴ سند تحلیل و ۶.۱ سند "
+        "فرانت).\n\n"
+        "- **ویجت بدون مجوز اصلاً برنمی‌گردد**، نه اینکه صفر یا خطا بدهد. فرانت "
+        "فقط `widgets` را می‌پیماید و هرچه آمد را می‌چیند؛ لازم نیست خودش "
+        "مجوزها را بررسی کند.\n"
+        "- همه اعداد از محدوده دسترسی همان کاربر عبور می‌کنند؛ مدیر یک شعبه "
+        "عدد همان شعبه را می‌بیند.\n"
+        "- هر ویجت `link` دارد: مسیر API‌ای که جزئیات همان عدد را می‌دهد "
+        "(Drill-down).\n"
+        "- `value` برابر `null` یعنی «داده‌ای برای محاسبه نیست» — با صفر یکی "
+        "نیست و باید متفاوت نمایش داده شود.\n\n"
+        "با `widgets=activeStudents,attendanceToday` می‌توانید فقط بخشی را "
+        "بخواهید؛ کارت‌های بالای صفحه این‌طور زودتر می‌آیند و منتظر محاسبه "
+        "روند سی‌روزه نمی‌مانند."
+    ),
+    parameters=[
+        OpenApiParameter(
+            "widgets",
+            str,
+            description=(
+                "کلید ویجت‌های موردنیاز، با کاما. خالی یعنی همه ویجت‌های مجاز."
+            ),
+        )
+    ],
+    responses={
+        200: OpenApiResponse(description="ویجت‌های داشبورد"),
+        401: ErrorResponseSerializer,
+    },
+    examples=[
+        OpenApiExample(
+            "نمونه پاسخ",
+            value={
+                "generatedAt": "2026-09-01T10:35:00+03:30",
+                "date": "2026-09-01",
+                "scope": {
+                    "schoolId": "900a07a7-46dd-4f06-b81c-f22e996f269c",
+                    "campusId": None,
+                    "academicYearId": None,
+                },
+                "widgetCount": 2,
+                "widgets": [
+                    {
+                        "key": "activeStudents",
+                        "title": "دانش‌آموزان فعال",
+                        "link": "/api/v1/students/students/?status=ACTIVE",
+                        "asOf": "2026-09-01T10:35:00+03:30",
+                        "value": 842,
+                        "unit": "دانش‌آموز",
+                        "breakdown": [{"label": "پایه هفتم", "value": 310}],
+                    },
+                    {
+                        "key": "tuitionCollection",
+                        "title": "وصول شهریه",
+                        "link": "/api/v1/finance/invoices/aging/",
+                        "asOf": "2026-09-01T10:35:00+03:30",
+                        "value": 76.4,
+                        "unit": "درصد وصول",
+                        "currency": "IRR",
+                        "breakdown": [
+                            {"label": "مبلغ صورتحساب", "value": 18000000000},
+                            {"label": "وصول‌شده", "value": 13750000000},
+                        ],
+                    },
+                ],
+            },
+            response_only=True,
+        )
+    ],
+)
+class DashboardView(APIView):
+    """داشبورد صفحه اصلی، متناسب با نقش و دامنه کاربر."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        raw = request.query_params.get("widgets", "")
+        keys = [item for item in raw.replace(" ", "").split(",") if item]
+        return Response(build_dashboard(request, keys=keys or None))

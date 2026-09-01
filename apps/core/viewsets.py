@@ -11,6 +11,7 @@ ViewSetهای پایه.
 from __future__ import annotations
 
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import mixins, viewsets
 from rest_framework.response import Response
 
@@ -20,20 +21,56 @@ from apps.core.exceptions import ConcurrencyConflict, ScopeViolation
 
 class ScopedQuerysetMixin:
     """
-    اعمال خودکار Tenant و Context کاری روی Queryset.
+    اعمال خودکار Tenant، محدوده مجاز کاربر و Context کاری روی Queryset.
 
-    فیلدهای اختیاری روی View:
-        tenant_field = "tenant"          مسیر ORM تا Tenant
-        school_field = "school"          مسیر ORM تا مدرسه
-        campus_field = "campus"          مسیر ORM تا شعبه
-        academic_year_field = "academic_year"
-    مقدار `None` یعنی این بُعد روی مدل وجود ندارد و فیلتر نمی‌شود.
+    سه لایه فیلتر پشت سر هم:
+
+    1. **Tenant** — مرز مالکیت داده.
+    2. **محدوده مجاز** از انتساب‌های نقش کاربر (:mod:`apps.identity.scopes`).
+       اجباری است و کلاینت راهی برای بازکردنش ندارد.
+    3. **Context کاری** از هدرهای `X-School-Id` و مانند آن؛ فقط باریک‌تر
+       می‌کند و پیش از رسیدن به اینجا با لایه دوم تطبیق داده شده است.
+
+    بدون لایه دوم، نفرستادن هدر یعنی «هیچ فیلتری» — یعنی معلمِ یک شعبه با یک
+    درخواست ساده، داده کل سازمان را می‌گرفت.
+
+    **اعلام مسیرها روی View.** هر بُعد یک فیلد است که مسیر ORM آن مدل تا آن
+    بُعد را نگه می‌دارد؛ `None` یعنی این منبع چنین بُعدی ندارد::
+
+        school_field = "campus__school"
+        campus_field = "campus"
+        self_student_field = "student"   # برای قاعده SELF
+
+    مسیر اعلام‌شده **نباید** از FK اختیاری بگذرد: ``filter(path__in=...)``
+    رکوردهایی را که آن FK را خالی دارند بی‌صدا حذف می‌کند و نتیجه‌اش گم‌شدن
+    داده است، نه محدودکردن دسترسی.
+
+    **بندِ غیرقابل بیان.** اگر انتساب کاربر روی این منبع قابل ترجمه نباشد
+    (مثلاً نقش سطح کلاس روی «فهرست تأمین‌کنندگان» که نه کلاس دارد و نه مدرسه)،
+    آن بند محدودیتی اعمال نمی‌کند. سخت‌گیری بیشتر، داده‌ای را پنهان می‌کرد که
+    کاربر امروز به‌درستی می‌بیند؛ مسئولیت این منابع با کنترل مجوز است، نه دامنه.
     """
 
     tenant_field: str | None = "tenant"
     school_field: str | None = None
     campus_field: str | None = None
     academic_year_field: str | None = None
+    class_group_field: str | None = None
+    course_offering_field: str | None = None
+
+    #: مسیر ORM تا دانش‌آموزِ صاحب رکورد — پایه قاعده SELF برای دانش‌آموز و ولی.
+    self_student_field: str | None = None
+    #: مسیر ORM تا شخصِ صاحب رکورد، برای منابعی که دانش‌آموز ندارند.
+    self_person_field: str | None = None
+
+    #: نگاشت بُعد محدوده به نام فیلد View.
+    SCOPE_FIELDS = {
+        "schools": "school_field",
+        "campuses": "campus_field",
+        "academic_years": "academic_year_field",
+        "class_groups": "class_group_field",
+        "course_offerings": "course_offering_field",
+    }
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -48,18 +85,101 @@ class ScopedQuerysetMixin:
         if self.tenant_field and ctx.tenant_id:
             queryset = queryset.filter(**{f"{self.tenant_field}_id": ctx.tenant_id})
 
+        queryset = self.apply_effective_scope(queryset, ctx)
+
         if self.school_field and ctx.school_id:
-            queryset = queryset.filter(**{f"{self.school_field}_id": ctx.school_id})
+            queryset = queryset.filter(
+                **{self.id_lookup(self.school_field): ctx.school_id}
+            )
 
         if self.campus_field and ctx.campus_id:
-            queryset = queryset.filter(**{f"{self.campus_field}_id": ctx.campus_id})
+            queryset = queryset.filter(
+                **{self.id_lookup(self.campus_field): ctx.campus_id}
+            )
 
         if self.academic_year_field and ctx.academic_year_id:
             queryset = queryset.filter(
-                **{f"{self.academic_year_field}_id": ctx.academic_year_id}
+                **{self.id_lookup(self.academic_year_field): ctx.academic_year_id}
             )
 
         return queryset
+
+    # -- محدوده مجاز ----------------------------------------------------
+    def apply_effective_scope(self, queryset, ctx):
+        """بندهای محدوده کاربر را با «یا» ترکیب و روی Queryset اعمال می‌کند."""
+        scope = getattr(ctx, "effective_scope", None)
+        if scope is None or scope.is_unrestricted:
+            return queryset
+        if not scope.clauses:
+            # کاربر بدون نقش فعال: هیچ داده سازمانی نمی‌بیند.
+            return queryset.none()
+
+        combined = Q()
+        for clause in scope.clauses:
+            condition = self.build_scope_clause(clause, ctx)
+            if condition is None:
+                # این بند روی این منبع قابل بیان نیست ⇒ بدون محدودیت.
+                return queryset
+            combined |= condition
+
+        return queryset.filter(combined).distinct()
+
+    @staticmethod
+    def id_lookup(path: str, suffix: str = "") -> str:
+        """
+        مسیر اعلام‌شده را به Lookup روی ستون شناسه تبدیل می‌کند.
+
+        مسیر معمولاً به یک FK اشاره دارد و `_id` می‌گیرد (`campus` →
+        `campus_id`). ولی وقتی خودِ منبع همان بُعد است، مسیر `"id"` اعلام
+        می‌شود و افزودن پسوند، `id_id` می‌ساخت که فیلدی وجود ندارد.
+        """
+        base = path if path == "id" or path.endswith("__id") else f"{path}_id"
+        return f"{base}{suffix}"
+
+    def build_scope_clause(self, clause, ctx):
+        """
+        یک بند محدوده را به شرط ORM ترجمه می‌کند.
+
+        خروجی `None` یعنی «روی این منبع قابل بیان نیست».
+        """
+        if clause.self_only:
+            return self.build_self_scope(ctx)
+
+        if clause.dimension:
+            path = getattr(self, self.SCOPE_FIELDS[clause.dimension], None)
+            if path:
+                return Q(**{self.id_lookup(path): clause.value})
+
+        # بُعد باریک روی این منبع وجود ندارد؛ مدرسهٔ ضمنی همان بند را می‌گیریم.
+        if clause.school_id and self.school_field:
+            return Q(**{self.id_lookup(self.school_field): clause.school_id})
+
+        return None
+
+    def build_self_scope(self, ctx):
+        """
+        شرط قاعده SELF: فقط رکوردهای خودِ کاربر یا فرزندان تحت سرپرستی او.
+
+        منبعی که هیچ‌یک از دو مسیر را اعلام نکرده باشد `None` برمی‌گرداند و
+        محدود نمی‌شود؛ برای آن منابع باید مجوز نقش (`permission_resource`)
+        دسترسی را ببندد.
+        """
+        from apps.identity.scopes import visible_student_ids
+
+        person_id = getattr(self.request.user, "person_id", None)
+
+        if self.self_student_field:
+            return Q(
+                **{
+                    self.id_lookup(self.self_student_field, "__in"): visible_student_ids(
+                        person_id
+                    )
+                }
+            )
+        if self.self_person_field:
+            ids = {person_id} if person_id else set()
+            return Q(**{self.id_lookup(self.self_person_field, "__in"): ids})
+        return None
 
 
 class OptimisticConcurrencyMixin:

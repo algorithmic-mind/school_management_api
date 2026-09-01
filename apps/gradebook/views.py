@@ -70,6 +70,12 @@ class AssessmentCategoryViewSet(BaseModelViewSet):
     serializer_class = AssessmentCategorySerializer
     filterset_fields = ("course_offering", "is_active")
     permission_resource = "grade"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
 
     @extend_schema(
         tags=["Gradebook"],
@@ -104,6 +110,12 @@ class GradeItemViewSet(BaseModelViewSet):
     filterset_fields = ("category", "source_type", "status")
     search_fields = ("title",)
     permission_resource = "grade"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "category__course_offering__course__school"
+    campus_field = "category__course_offering__class_group__campus"
+    academic_year_field = "category__course_offering__term__academic_year"
+    class_group_field = "category__course_offering__class_group"
+    course_offering_field = "category__course_offering"
     permission_map = {
         "lock": "grade.lock",
         "unlock": "grade.unlock",
@@ -225,6 +237,13 @@ class StudentScoreViewSet(BaseModelViewSet):
     serializer_class = StudentScoreSerializer
     filterset_class = StudentScoreFilter
     permission_resource = "grade"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    class_group_field = "grade_item__category__course_offering__class_group"
+    course_offering_field = "grade_item__category__course_offering"
+    self_student_field = "enrollment__student"
 
     @extend_schema(
         tags=["Gradebook"],
@@ -363,6 +382,13 @@ class CourseResultViewSet(BaseModelViewSet):
     serializer_class = CourseResultSerializer
     filterset_fields = ("course_offering", "enrollment", "result_status")
     permission_resource = "grade"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
+    self_student_field = "enrollment__student"
     permission_map = {"calculate": "grade.update"}
 
     @extend_schema(
@@ -418,6 +444,11 @@ class ReportCardViewSet(BaseModelViewSet):
     serializer_class = ReportCardSerializer
     filterset_fields = ("enrollment", "term", "status")
     permission_resource = "report_card"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "term__academic_year"
+    self_student_field = "enrollment__student"
     permission_map = {
         "generate": "report_card.generate",
         "bulk_generate": "report_card.generate",
@@ -493,3 +524,10 @@ class ReportCardItemViewSet(BaseReadOnlyViewSet):
     serializer_class = ReportCardItemSerializer
     filterset_fields = ("report_card",)
     permission_resource = "report_card"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "report_card__enrollment__campus__school"
+    campus_field = "report_card__enrollment__campus"
+    academic_year_field = "report_card__term__academic_year"
+    class_group_field = "course_result__course_offering__class_group"
+    course_offering_field = "course_result__course_offering"
+    self_student_field = "report_card__enrollment__student"

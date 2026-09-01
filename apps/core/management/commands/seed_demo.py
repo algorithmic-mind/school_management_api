@@ -122,7 +122,7 @@ class Command(BaseCommand):
         students = self._create_students(
             tenant, campus, year, grades[0], program, class_group, options["students"]
         )
-        self._create_users(tenant, teacher, students)
+        self._create_users(tenant, teacher, students, school, campus)
 
         self.stdout.write(self.style.SUCCESS("\n" + "=" * 62))
         self.stdout.write(self.style.SUCCESS("داده نمونه با موفقیت ساخته شد."))
@@ -584,8 +584,15 @@ class Command(BaseCommand):
 
         return students
 
-    def _create_users(self, tenant, teacher, students):
-        """کاربران نمونه با نقش‌های سیستمی."""
+    def _create_users(self, tenant, teacher, students, school, campus):
+        """
+        کاربران نمونه با نقش‌های سیستمی.
+
+        هر انتساب `scope_id` واقعی می‌گیرد (شناسه مدرسه یا شعبه). انتساب بدون
+        شناسه، طبق قرارداد :mod:`apps.identity.scopes`، یعنی «کل سازمان» و
+        محدودسازی داده را عملاً خاموش می‌کند — پس داده نمونه هم باید همان
+        محدودیتی را داشته باشد که در عملیات انتظار می‌رود.
+        """
         roles = {role.code: role for role in Role.objects.filter(tenant=tenant)}
         if not roles:
             self.stdout.write(
@@ -594,6 +601,12 @@ class Command(BaseCommand):
                 )
             )
             return
+
+        #: شناسه دامنه متناظر با هر نوع Scope در این داده نمونه.
+        scope_targets = {
+            ScopeType.SCHOOL: school.id,
+            ScopeType.CAMPUS: campus.id,
+        }
 
         def make_user(username, person=None, role_code=None, scope_type=None,
                       superuser=False):
@@ -611,12 +624,16 @@ class Command(BaseCommand):
                 user.set_password(DEMO_PASSWORD)
                 user.save()
             if role_code and role_code in roles:
-                UserRoleAssignment.objects.get_or_create(
+                scope_type = scope_type or ScopeType.SCHOOL
+                UserRoleAssignment.objects.update_or_create(
                     user=user,
                     role=roles[role_code],
-                    scope_type=scope_type or ScopeType.SCHOOL,
+                    scope_type=scope_type,
                     defaults={
                         "tenant": tenant,
+                        # TENANT و SELF شناسه دامنه ندارند: اولی کل سازمان است
+                        # و دومی با person_id خودِ کاربر تعیین می‌شود.
+                        "scope_id": scope_targets.get(scope_type),
                         "effective_from": self.year_start,
                         "status": "ACTIVE",
                     },

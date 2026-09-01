@@ -121,6 +121,8 @@ class StudentViewSet(BaseModelViewSet):
     )
     ordering_fields = ("student_no", "joined_on", "created_at")
     permission_resource = "student"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "id"
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -142,10 +144,25 @@ class StudentViewSet(BaseModelViewSet):
         قاعده SELF و دسترسی ولی (بخش ۳.۳).
 
         دانش‌آموز فقط پرونده خود و ولی فقط فرزند مجاز خود را می‌بیند.
+
+        داشتن مجوز `student.read` به‌تنهایی کافی نیست: نقش‌های «دانش‌آموز» و
+        «ولی» هم همین مجوز را دارند و اگر مبنای تصمیم قرار می‌گرفت، هر
+        دانش‌آموز می‌توانست پرونده هر دانش‌آموز دیگری را با شناسه‌اش بخواند.
+        مجوز تعیین می‌کند «کدام نوع داده»، و دامنه تعیین می‌کند «کدام
+        رکوردها» — این دو جای هم را نمی‌گیرند.
         """
+        from apps.core.context import get_current_context
+
         user = request.user
-        if user.is_superuser or user.has_perm_code("student.read"):
+        if user.is_superuser:
             return True
+
+        ctx = get_current_context()
+        scope = getattr(ctx, "effective_scope", None) if ctx else None
+        organizational = scope is not None and not scope.self_only
+        if organizational and user.has_perm_code("student.read"):
+            return True
+
         if user.person_id and obj.person_id == user.person_id:
             return True
         return StudentGuardian.objects.filter(
@@ -361,6 +378,8 @@ class StudentGuardianViewSet(BaseModelViewSet):
         "financially_responsible",
     )
     permission_resource = "guardian"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
 
 
 class AdmissionFilter(filters.FilterSet):
@@ -398,6 +417,8 @@ class AdmissionApplicationViewSet(BaseModelViewSet):
     search_fields = ("application_no", "person__first_name", "person__last_name")
     ordering_fields = ("created_at", "final_score", "waitlist_rank")
     permission_resource = "admission"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "academic_year__school"
     academic_year_field = "academic_year"
     permission_map = {
         "submit": "admission.update",
@@ -566,7 +587,11 @@ class EnrollmentViewSet(BaseModelViewSet):
         "student__person__last_name",
     )
     permission_resource = "enrollment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
     academic_year_field = "academic_year"
+    self_student_field = "student"
     permission_map = {
         "approve_documents": "enrollment.update",
         "confirm_finance": "enrollment.update",
@@ -740,6 +765,12 @@ class ClassMembershipViewSet(BaseModelViewSet):
     serializer_class = ClassMembershipSerializer
     filterset_fields = ("enrollment", "class_group", "status", "is_primary")
     permission_resource = "enrollment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    class_group_field = "class_group"
+    self_student_field = "enrollment__student"
 
 
 @extend_schema_view(
@@ -755,6 +786,8 @@ class ConsentViewSet(BaseModelViewSet):
     serializer_class = ConsentSerializer
     filterset_fields = ("student", "guardian", "consent_type", "status")
     permission_resource = "consent"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
     permission_map = {"revoke": "consent.revoke"}
 
     @extend_schema(
@@ -791,6 +824,11 @@ class StudentTransferViewSet(BaseReadOnlyViewSet):
     serializer_class = StudentTransferSerializer
     filterset_fields = ("student", "enrollment", "transfer_type")
     permission_resource = "enrollment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    self_student_field = "enrollment__student"
 
 
 @extend_schema_view(
@@ -802,6 +840,9 @@ class PromotionBatchViewSet(BaseModelViewSet):
     serializer_class = PromotionBatchSerializer
     filterset_fields = ("source_year", "target_year", "status")
     permission_resource = "enrollment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "source_year__school"
+    academic_year_field = "source_year"
     permission_map = {"preview": "enrollment.read", "commit": "enrollment.create"}
 
     @extend_schema(
@@ -869,3 +910,8 @@ class PromotionDecisionRecordViewSet(BaseModelViewSet):
     serializer_class = PromotionDecisionRecordSerializer
     filterset_fields = ("batch", "decision", "applied")
     permission_resource = "enrollment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "batch__source_year__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "batch__source_year"
+    self_student_field = "enrollment__student"

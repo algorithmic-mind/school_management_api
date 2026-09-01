@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import django_filters as filters
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, F, Q, Sum
 from django.shortcuts import get_object_or_404
@@ -16,17 +17,19 @@ from drf_spectacular.utils import (
     extend_schema,
     extend_schema_view,
 )
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.context import get_current_context
 from apps.core.exceptions import BusinessRuleViolation, InvalidStateTransition
 from apps.core.serializers import (
     ErrorResponseSerializer,
     OperationResultSerializer,
     ReasonSerializer,
 )
-from apps.core.viewsets import BaseModelViewSet, BaseReadOnlyViewSet
-from apps.finance import services
+from apps.core.viewsets import BaseModelViewSet, BaseReadOnlyViewSet, ensure_in_scope
+from apps.finance import reports, services
 from apps.finance.enums import (
     ApprovalState,
     InvoiceStatus,
@@ -56,16 +59,21 @@ from apps.finance.serializers import (
     AccountLedgerSerializer,
     AccountSerializer,
     AllocatePaymentSerializer,
+    BalanceSheetSerializer,
     BankAccountSerializer,
     BankReconciliationSerializer,
+    CostCenterReportSerializer,
     CostCenterSerializer,
     CreateJournalEntrySerializer,
+    DaybookSerializer,
     DiscountAwardSerializer,
     FamilyBalanceSerializer,
     FeePlanItemSerializer,
     FeePlanSerializer,
     FiscalYearSerializer,
+    GeneralLedgerSerializer,
     GenerateInstallmentsSerializer,
+    IncomeStatementSerializer,
     InvoiceLineSerializer,
     InvoiceSerializer,
     JournalEntrySerializer,
@@ -76,7 +84,9 @@ from apps.finance.serializers import (
     RefundSerializer,
     ReverseJournalSerializer,
     StudentFinancialAgreementSerializer,
+    TrialBalanceSerializer,
 )
+from apps.organization.models import School
 
 ERRORS = {
     400: OpenApiResponse(ErrorResponseSerializer, description="داده ورودی معتبر نیست"),
@@ -85,6 +95,27 @@ ERRORS = {
     409: OpenApiResponse(ErrorResponseSerializer, description="دوره بسته یا تعارض وضعیت"),
     422: OpenApiResponse(ErrorResponseSerializer, description="نقض قاعده کسب‌وکار"),
 }
+
+
+def _resolve_optional(model, raw_id):
+    """
+    پارامتر اختیاریِ «شناسه یک منبع» را به شیء تبدیل می‌کند.
+
+    خالی‌بودن پارامتر یعنی «بدون فیلتر»، نه خطا؛ ولی شناسه بدفرم یا خارج از
+    Tenant باید صریح رد شود، نه اینکه بی‌صدا به «همه» تبدیل گردد.
+    """
+    if not raw_id:
+        return None
+    try:
+        instance = model.objects.get(pk=raw_id)
+    except (model.DoesNotExist, ValueError, ValidationError):
+        raise BusinessRuleViolation(
+            code="INVALID_PARAMETER",
+            message=f"شناسه {model._meta.verbose_name} معتبر نیست.",
+            status_code=400,
+        )
+    ensure_in_scope(instance)
+    return instance
 
 
 @extend_schema_view(
@@ -96,6 +127,8 @@ class FiscalYearViewSet(BaseModelViewSet):
     serializer_class = FiscalYearSerializer
     filterset_fields = ("school", "status")
     permission_resource = "journal"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
     permission_map = {"close": "journal.close_period"}
 
     @extend_schema(
@@ -131,27 +164,36 @@ class AccountViewSet(BaseModelViewSet):
     search_fields = ("code", "title")
     ordering_fields = ("code",)
     permission_resource = "journal"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
     @extend_schema(
         tags=["Finance"],
         summary="گردش حساب",
         description=(
             "ریز گردش یک حساب در بازه مشخص با مانده تجمعی — برای صفحه «گردش "
-            "حساب» (بخش ۱۲.۲)."
+            "حساب» (بخش ۱۲.۲).\n\n"
+            "با ارسال `date_from`، مانده پیش از آن تاریخ در `openingBalance` "
+            "می‌آید و مانده تجمعی ستون `balance` از همان‌جا شروع می‌شود."
         ),
         parameters=[
             OpenApiParameter("date_from", str, description="از تاریخ (YYYY-MM-DD)"),
             OpenApiParameter("date_to", str, description="تا تاریخ (YYYY-MM-DD)"),
+            OpenApiParameter("cost_center", str, description="شناسه مرکز هزینه"),
         ],
         responses={200: AccountLedgerSerializer, **ERRORS},
     )
     @action(detail=True, methods=["get"])
     def ledger(self, request, pk=None):
         account = self.get_object()
-        payload = services.account_ledger(
+        cost_center = _resolve_optional(
+            CostCenter, request.query_params.get("cost_center")
+        )
+        payload = reports.account_ledger(
             account,
             request.query_params.get("date_from"),
             request.query_params.get("date_to"),
+            cost_center=cost_center,
         )
         return Response(payload)
 
@@ -163,6 +205,8 @@ class CostCenterViewSet(BaseModelViewSet):
     filterset_fields = ("school", "is_active")
     search_fields = ("code", "title")
     permission_resource = "journal"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(
@@ -176,6 +220,9 @@ class FeePlanViewSet(BaseModelViewSet):
     serializer_class = FeePlanSerializer
     filterset_fields = ("academic_year", "grade_level", "status")
     permission_resource = "fee_plan"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "academic_year__school"
+    academic_year_field = "academic_year"
 
 
 @extend_schema_view(list=extend_schema(tags=["Finance"], summary="اقلام الگوی شهریه"))
@@ -184,6 +231,9 @@ class FeePlanItemViewSet(BaseModelViewSet):
     serializer_class = FeePlanItemSerializer
     filterset_fields = ("fee_plan", "fee_type", "is_mandatory")
     permission_resource = "fee_plan"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "fee_plan__academic_year__school"
+    academic_year_field = "fee_plan__academic_year"
 
 
 @extend_schema_view(
@@ -202,6 +252,11 @@ class StudentFinancialAgreementViewSet(BaseModelViewSet):
     serializer_class = StudentFinancialAgreementSerializer
     filterset_fields = ("enrollment", "fee_plan", "responsible_guardian", "status")
     permission_resource = "invoice"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "fee_plan__academic_year"
+    self_student_field = "enrollment__student"
     permission_map = {
         "generate_installments": "invoice.create",
         "recalculate": "invoice.create",
@@ -260,6 +315,11 @@ class DiscountAwardViewSet(BaseModelViewSet):
     serializer_class = DiscountAwardSerializer
     filterset_fields = ("agreement", "discount_type", "approval_status")
     permission_resource = "invoice"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "agreement__enrollment__campus__school"
+    campus_field = "agreement__enrollment__campus"
+    academic_year_field = "agreement__fee_plan__academic_year"
+    self_student_field = "agreement__enrollment__student"
     permission_map = {"approve": "invoice.issue"}
 
     @extend_schema(
@@ -336,6 +396,11 @@ class InvoiceViewSet(BaseModelViewSet):
     search_fields = ("invoice_no", "agreement__enrollment__student__student_no")
     ordering_fields = ("due_date", "issue_date", "total_amount")
     permission_resource = "invoice"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "agreement__enrollment__campus__school"
+    campus_field = "agreement__enrollment__campus"
+    academic_year_field = "agreement__fee_plan__academic_year"
+    self_student_field = "agreement__enrollment__student"
     permission_map = {
         "issue": "invoice.issue",
         "cancel": "invoice.cancel",
@@ -446,6 +511,11 @@ class InvoiceLineViewSet(BaseModelViewSet):
     serializer_class = InvoiceLineSerializer
     filterset_fields = ("invoice", "fee_type")
     permission_resource = "invoice"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "invoice__agreement__enrollment__campus__school"
+    campus_field = "invoice__agreement__enrollment__campus"
+    academic_year_field = "invoice__agreement__fee_plan__academic_year"
+    self_student_field = "invoice__agreement__enrollment__student"
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -508,6 +578,8 @@ class PaymentViewSet(BaseModelViewSet):
     ordering_fields = ("received_at", "amount")
     throttle_scope = "payment"
     permission_resource = "payment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "payer_person"
     permission_map = {
         "post_payment": "payment.create",
         "allocate": "payment.allocate",
@@ -629,6 +701,11 @@ class PaymentAllocationViewSet(BaseReadOnlyViewSet):
     serializer_class = PaymentAllocationSerializer
     filterset_fields = ("payment", "invoice")
     permission_resource = "payment"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "invoice__agreement__enrollment__campus__school"
+    campus_field = "invoice__agreement__enrollment__campus"
+    academic_year_field = "invoice__agreement__fee_plan__academic_year"
+    self_student_field = "invoice__agreement__enrollment__student"
 
 
 @extend_schema_view(
@@ -640,6 +717,8 @@ class RefundViewSet(BaseModelViewSet):
     serializer_class = RefundSerializer
     filterset_fields = ("payment", "status", "approval_status")
     permission_resource = "refund"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "payment__payer_person"
     permission_map = {"approve": "refund.approve", "complete": "refund.approve"}
 
     def perform_create(self, serializer):
@@ -706,6 +785,8 @@ class JournalEntryViewSet(BaseModelViewSet):
     search_fields = ("entry_no", "description")
     ordering_fields = ("entry_date", "entry_no")
     permission_resource = "journal"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "fiscal_year__school"
     permission_map = {
         "create_entry": "journal.create",
         "post_entry": "journal.post",
@@ -830,6 +911,8 @@ class JournalLineViewSet(BaseReadOnlyViewSet):
     serializer_class = JournalLineSerializer
     filterset_fields = ("journal_entry", "account", "cost_center")
     permission_resource = "journal"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "account__school"
 
 
 @extend_schema_view(list=extend_schema(tags=["Finance"], summary="حساب‌های بانکی"))
@@ -838,6 +921,8 @@ class BankAccountViewSet(BaseModelViewSet):
     serializer_class = BankAccountSerializer
     filterset_fields = ("school", "status")
     permission_resource = "bank"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(
@@ -853,6 +938,8 @@ class BankReconciliationViewSet(BaseModelViewSet):
     serializer_class = BankReconciliationSerializer
     filterset_fields = ("bank_account", "status")
     permission_resource = "bank"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "bank_account__school"
 
 
 @extend_schema(
@@ -931,3 +1018,372 @@ class FamilyBalanceViewSet(BaseReadOnlyViewSet):
                 "students": students,
             }
         )
+
+
+# ===========================================================================
+# گزارش‌های حسابداری (بخش ۱۴.۳ سند تحلیل)
+# ===========================================================================
+_REPORT_PARAMETERS = [
+    OpenApiParameter(
+        "school",
+        str,
+        description="شناسه مدرسه؛ در نبودش، مدرسه Context جاری (هدر X-School-Id).",
+    ),
+    OpenApiParameter("fiscal_year", str, description="شناسه سال مالی"),
+    OpenApiParameter("date_from", str, description="از تاریخ (YYYY-MM-DD)"),
+    OpenApiParameter("date_to", str, description="تا تاریخ (YYYY-MM-DD)"),
+]
+
+_LEDGER_EXAMPLE = OpenApiExample(
+    "نمونه پاسخ دفتر کل",
+    value={
+        "dateFrom": "2026-06-01",
+        "dateTo": "2026-08-31",
+        "currency": "IRR",
+        "accountCount": 2,
+        "totals": {
+            "openingBalance": 0,
+            "periodDebit": 120000000,
+            "periodCredit": 120000000,
+            "closingBalance": 0,
+            "isBalanced": True,
+        },
+        "accounts": [
+            {
+                "accountId": "8e34ec71-cebc-4cbc-9d47-b8067dd706c0",
+                "accountCode": "1101",
+                "accountTitle": "صندوق",
+                "accountType": "ASSET",
+                "accountTypeDisplay": "دارایی",
+                "openingBalance": 0,
+                "openingDebit": 0,
+                "openingCredit": 0,
+                "periodDebit": 120000000,
+                "periodCredit": 0,
+                "closingBalance": 120000000,
+                "closingDebit": 120000000,
+                "closingCredit": 0,
+                "rowCount": 1,
+                "rowsTruncated": False,
+                "rows": [
+                    {
+                        "entryId": "3f1b8c22-0d44-4f0a-9a11-6b2c7d8e9f01",
+                        "lineId": "9c0d1e2f-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
+                        "entryNo": "JV-1405-000012",
+                        "entryDate": "2026-07-05",
+                        "sourceType": "PAYMENT",
+                        "sourceTypeDisplay": "دریافت",
+                        "description": "دریافت شهریه — قسط دوم",
+                        "costCenter": "دبیرستان دوره اول",
+                        "debit": 120000000,
+                        "credit": 0,
+                        "balance": 120000000,
+                    }
+                ],
+            }
+        ],
+    },
+    response_only=True,
+)
+
+
+class AccountingReportViewSet(viewsets.ViewSet):
+    """
+    گزارش‌های رسمی حسابداری روی اسناد قطعی.
+
+    این نماها فقط‌خواندنی و تجمیعی‌اند؛ هیچ‌کدام داده‌ای نمی‌نویسند. برای دیدن
+    آن‌ها یکی از مجوزهای «مشاهده سند حسابداری» یا «مشاهده گزارش» کافی است، پس
+    هم حسابدار و هم ناظر/مدیر به آن دسترسی دارند.
+
+    همه گزارش‌ها فقط سند **قطعی** را می‌شمارند: سند پیش‌نویس هنوز رسمی نیست و
+    سند لغوشده اثری ندارد.
+    """
+
+    permission_resource = "journal"
+    _ANY_READER = ("journal.read", "report.read")
+    permission_map = {
+        "list": _ANY_READER,
+        "general_ledger": _ANY_READER,
+        "trial_balance": _ANY_READER,
+        "income_statement": _ANY_READER,
+        "balance_sheet": _ANY_READER,
+        "daybook": _ANY_READER,
+        "cost_centers": _ANY_READER,
+    }
+
+    # -- ابزار مشترک ----------------------------------------------------
+    def _tenant_id(self):
+        ctx = get_current_context()
+        return ctx.tenant_id if ctx else None
+
+    def _common_filters(self, request) -> dict:
+        """
+        فیلترهای مشترک گزارش‌ها را از Query، Context و محدوده مجاز می‌سازد.
+
+        این نماها از `ScopedQuerysetMixin` عبور نمی‌کنند (خروجی‌شان Queryset
+        نیست)، پس محدوده مجاز باید همین‌جا صریح اعمال شود؛ وگرنه حسابدارِ یک
+        مدرسه با یک درخواست ساده، دفتر کل همه مدارس سازمان را می‌گرفت.
+
+        مدرسه اگر در Query نیامده باشد از هدر `X-School-Id` گرفته می‌شود، تا
+        گزارش با همان محیط کاری‌ای اجرا شود که بقیه صفحه‌ها با آن کار می‌کنند.
+        """
+        ctx = get_current_context()
+        school = _resolve_optional(School, request.query_params.get("school"))
+        if school is None and ctx and ctx.school_id:
+            school = _resolve_optional(School, ctx.school_id)
+
+        scope = getattr(ctx, "effective_scope", None) if ctx else None
+        allowed_schools = scope.dimension("schools") if scope is not None else None
+
+        return {
+            "tenant_id": self._tenant_id(),
+            "school": school,
+            "schools": allowed_schools,
+            "fiscal_year": _resolve_optional(
+                FiscalYear, request.query_params.get("fiscal_year")
+            ),
+            "date_from": request.query_params.get("date_from"),
+            "date_to": request.query_params.get("date_to"),
+        }
+
+    @staticmethod
+    def _flag(request, name: str, default: bool = False) -> bool:
+        raw = request.query_params.get(name)
+        if raw is None:
+            return default
+        return raw.lower() in {"1", "true", "yes", "on"}
+
+    # -- کاتالوگ --------------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="کاتالوگ گزارش‌های حسابداری",
+        description=(
+            "فهرست گزارش‌های در دسترس با مسیر و پارامترهای هرکدام — برای ساخت "
+            "صفحه «کاتالوگ گزارش‌ها» بدون Hardcode کردن مسیرها (بخش ۱۵.۱ سند فرانت)."
+        ),
+        responses={
+            200: OpenApiResponse(description="فهرست گزارش‌ها"),
+            **ERRORS,
+        },
+    )
+    def list(self, request):
+        base = "/api/v1/finance/reports"
+        period = ["school", "fiscal_year", "date_from", "date_to"]
+        catalog = [
+            {
+                "key": "general-ledger",
+                "title": "دفتر کل",
+                "description": "ریز گردش هر حساب با مانده ابتدا، گردش دوره و مانده پایان.",
+                "path": f"{base}/general-ledger/",
+                "parameters": period + ["account", "account_type", "cost_center", "include_empty", "max_rows"],
+            },
+            {
+                "key": "trial-balance",
+                "title": "تراز آزمایشی",
+                "description": "شش‌ستونی: مانده ابتدا، گردش دوره و مانده پایان هر حساب.",
+                "path": f"{base}/trial-balance/",
+                "parameters": period + ["cost_center", "include_zero"],
+            },
+            {
+                "key": "income-statement",
+                "title": "صورت سود و زیان",
+                "description": "درآمد، هزینه و سود خالص دوره.",
+                "path": f"{base}/income-statement/",
+                "parameters": period + ["cost_center"],
+            },
+            {
+                "key": "balance-sheet",
+                "title": "صورت وضعیت مالی",
+                "description": "دارایی، بدهی و حقوق صاحبان سرمایه در یک تاریخ.",
+                "path": f"{base}/balance-sheet/",
+                "parameters": ["school", "fiscal_year", "as_of"],
+            },
+            {
+                "key": "daybook",
+                "title": "دفتر روزنامه",
+                "description": "اسناد قطعی به‌ترتیب تاریخ با ریز خطوط.",
+                "path": f"{base}/daybook/",
+                "parameters": period,
+            },
+            {
+                "key": "cost-centers",
+                "title": "درآمد و هزینه مراکز هزینه",
+                "description": "تجمیع درآمد و هزینه به تفکیک مرکز هزینه.",
+                "path": f"{base}/cost-centers/",
+                "parameters": period,
+            },
+            {
+                "key": "receivables-aging",
+                "title": "سن مطالبات",
+                "description": "توزیع مانده مطالبات در بازه‌های سررسید.",
+                "path": "/api/v1/finance/invoices/aging/",
+                "parameters": ["school", "status"],
+            },
+        ]
+        return Response(catalog)
+
+    # -- دفتر کل --------------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="دفتر کل",
+        description=(
+            "ریز گردش حساب‌ها در یک بازه، همراه با مانده ابتدای دوره، گردش "
+            "بدهکار/بستانکار و مانده پایان هر حساب (بخش ۱۴.۳).\n\n"
+            "- فقط اسناد **قطعی** محاسبه می‌شوند.\n"
+            "- بدون `account`، همه حساب‌های دارای گردش برمی‌گردند؛ با "
+            "`include_empty=true` حساب‌های بدون گردش هم می‌آیند.\n"
+            "- `max_rows` سقف ریز ردیف‌های هر حساب است؛ در صورت بریده‌شدن، "
+            "`rowsTruncated` روی همان حساب `true` می‌شود.\n"
+            "- `totals.isBalanced` کنترل سلامت است: در حسابداری دوبل جمع گردش "
+            "بدهکار و بستانکار دوره باید برابر باشد."
+        ),
+        parameters=_REPORT_PARAMETERS
+        + [
+            OpenApiParameter("account", str, description="محدودکردن به یک حساب"),
+            OpenApiParameter(
+                "account_type",
+                str,
+                description="ASSET | LIABILITY | EQUITY | REVENUE | EXPENSE (با کاما چندتایی)",
+            ),
+            OpenApiParameter("cost_center", str, description="شناسه مرکز هزینه"),
+            OpenApiParameter(
+                "include_empty", bool, description="نمایش حساب‌های بدون گردش"
+            ),
+            OpenApiParameter(
+                "max_rows", int, description="سقف ریز ردیف هر حساب (پیش‌فرض ۵۰۰)"
+            ),
+        ],
+        responses={200: GeneralLedgerSerializer, **ERRORS},
+        examples=[_LEDGER_EXAMPLE],
+    )
+    @action(detail=False, methods=["get"], url_path="general-ledger")
+    def general_ledger(self, request):
+        account = _resolve_optional(Account, request.query_params.get("account"))
+        raw_types = request.query_params.get("account_type", "")
+        account_types = [item for item in raw_types.replace(" ", "").split(",") if item]
+        try:
+            max_rows = int(request.query_params.get("max_rows", 500))
+        except ValueError:
+            raise BusinessRuleViolation(
+                code="INVALID_PARAMETER",
+                message="پارامتر max_rows باید عدد باشد.",
+                status_code=400,
+            )
+
+        payload = reports.general_ledger(
+            **self._common_filters(request),
+            accounts=[account] if account else None,
+            account_types=account_types or None,
+            cost_center=_resolve_optional(
+                CostCenter, request.query_params.get("cost_center")
+            ),
+            include_empty=self._flag(request, "include_empty"),
+            max_rows_per_account=max(max_rows, 0) or None,
+        )
+        return Response(payload)
+
+    # -- تراز آزمایشی ---------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="تراز آزمایشی",
+        description=(
+            "تراز شش‌ستونی حساب‌ها. `totals.isBalanced` باید همیشه `true` باشد؛ "
+            "`false` یعنی سندی خارج از مسیر سرویس‌های مالی ثبت شده و باید بررسی شود."
+        ),
+        parameters=_REPORT_PARAMETERS
+        + [
+            OpenApiParameter("cost_center", str, description="شناسه مرکز هزینه"),
+            OpenApiParameter(
+                "include_zero", bool, description="نمایش حساب‌های با مانده و گردش صفر"
+            ),
+        ],
+        responses={200: TrialBalanceSerializer, **ERRORS},
+    )
+    @action(detail=False, methods=["get"], url_path="trial-balance")
+    def trial_balance(self, request):
+        payload = reports.trial_balance(
+            **self._common_filters(request),
+            cost_center=_resolve_optional(
+                CostCenter, request.query_params.get("cost_center")
+            ),
+            include_zero=self._flag(request, "include_zero"),
+        )
+        return Response(payload)
+
+    # -- سود و زیان -----------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="صورت سود و زیان",
+        description=(
+            "درآمد و هزینه دوره با علامت طبیعی خودشان (هر دو مثبت) و سود خالص. "
+            "`netMarginPercent` وقتی درآمد صفر باشد `null` است، نه صفر."
+        ),
+        parameters=_REPORT_PARAMETERS
+        + [OpenApiParameter("cost_center", str, description="شناسه مرکز هزینه")],
+        responses={200: IncomeStatementSerializer, **ERRORS},
+    )
+    @action(detail=False, methods=["get"], url_path="income-statement")
+    def income_statement(self, request):
+        payload = reports.income_statement(
+            **self._common_filters(request),
+            cost_center=_resolve_optional(
+                CostCenter, request.query_params.get("cost_center")
+            ),
+        )
+        return Response(payload)
+
+    # -- صورت وضعیت مالی ------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="صورت وضعیت مالی (ترازنامه)",
+        description=(
+            "دارایی، بدهی و حقوق صاحبان سرمایه تا تاریخ `as_of` (پیش‌فرض: امروز).\n\n"
+            "سود/زیان دوره در `equity.retainedResult` جدا آمده و در جمع حقوق "
+            "صاحبان سرمایه لحاظ شده است؛ بدون آن، معادله حسابداری تا پیش از "
+            "بستن حساب‌های موقت تراز نمی‌شود."
+        ),
+        parameters=[
+            OpenApiParameter("school", str, description="شناسه مدرسه"),
+            OpenApiParameter("fiscal_year", str, description="شناسه سال مالی"),
+            OpenApiParameter("as_of", str, description="تا تاریخ (YYYY-MM-DD)"),
+        ],
+        responses={200: BalanceSheetSerializer, **ERRORS},
+    )
+    @action(detail=False, methods=["get"], url_path="balance-sheet")
+    def balance_sheet(self, request):
+        filters_ = self._common_filters(request)
+        payload = reports.balance_sheet(
+            tenant_id=filters_["tenant_id"],
+            school=filters_["school"],
+            schools=filters_["schools"],
+            fiscal_year=filters_["fiscal_year"],
+            as_of=request.query_params.get("as_of") or timezone.localdate(),
+        )
+        return Response(payload)
+
+    # -- دفتر روزنامه ---------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="دفتر روزنامه",
+        description="اسناد قطعی به‌ترتیب تاریخ، هر سند با ریز خطوط و جمع بدهکار/بستانکار.",
+        parameters=_REPORT_PARAMETERS,
+        responses={200: DaybookSerializer, **ERRORS},
+    )
+    @action(detail=False, methods=["get"])
+    def daybook(self, request):
+        return Response(reports.daybook(**self._common_filters(request)))
+
+    # -- مراکز هزینه ----------------------------------------------------
+    @extend_schema(
+        tags=["Reports"],
+        summary="درآمد و هزینه مراکز هزینه",
+        description=(
+            "تجمیع درآمد و هزینه هر مرکز هزینه. خطوط بدون مرکز هزینه زیر عنوان "
+            "«بدون مرکز هزینه» می‌آیند تا جمع گزارش با صورت سود و زیان بخواند."
+        ),
+        parameters=_REPORT_PARAMETERS,
+        responses={200: CostCenterReportSerializer, **ERRORS},
+    )
+    @action(detail=False, methods=["get"], url_path="cost-centers")
+    def cost_centers(self, request):
+        return Response(reports.cost_center_report(**self._common_filters(request)))

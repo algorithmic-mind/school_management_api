@@ -204,6 +204,24 @@ else:
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "identity.UserAccount"
 
+# ---------------------------------------------------------------------------
+# سیاست حساب کاربری (بخش ۱۵.۱ — «سیاست قفل هوشمند»)
+#
+# قفل موقت است، نه دائمی: مسدودکردن دائمی حساب پس از چند خطا، خودش یک ابزار
+# اختلال (DoS) علیه کاربر واقعی است. پس از پایان مهلت، شمارنده در نخستین ورود
+# موفق صفر می‌شود.
+# ---------------------------------------------------------------------------
+AUTH_MAX_FAILED_LOGINS = config("AUTH_MAX_FAILED_LOGINS", default=5, cast=int)
+AUTH_LOCKOUT_MINUTES = config("AUTH_LOCKOUT_MINUTES", default=15, cast=int)
+
+#: اعتبار لینک بازیابی رمز عبور (ساعت).
+PASSWORD_RESET_TIMEOUT = (
+    config("PASSWORD_RESET_HOURS", default=2, cast=int) * 3600
+)
+
+#: نشانی پایه فرانت‌اند برای ساخت لینک بازیابی رمز.
+FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default="").rstrip("/")
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
@@ -267,8 +285,9 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
+        # نسخه‌دار: توکنی که پس از تغییر رمز/ابطال نشست صادر نشده باشد رد می‌شود.
+        "apps.identity.authentication.VersionedJWTAuthentication",
+        "apps.identity.authentication.ContextSessionAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("apps.core.permissions.ScopedRBACPermission",),
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.DefaultPageNumberPagination",
@@ -304,6 +323,9 @@ SIMPLE_JWT = {
         days=config("JWT_REFRESH_DAYS", default=7, cast=int)
     ),
     "ROTATE_REFRESH_TOKENS": True,
+    # فهرست سیاه لازم نیست: ابطال با Claim نسخه توکن انجام می‌شود
+    # (apps/identity/authentication.py) و هم Access و هم Refresh را می‌گیرد،
+    # در حالی که فهرست سیاه فقط Refresh را پوشش می‌دهد.
     "BLACKLIST_AFTER_ROTATION": False,
     "UPDATE_LAST_LOGIN": True,
     "ALGORITHM": "HS256",

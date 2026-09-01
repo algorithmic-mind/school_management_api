@@ -52,12 +52,18 @@ class ScopeType:
     ]
 
 
-def _hydrate_context_from_user(request) -> None:
+def hydrate_context_from_user(request) -> None:
     """
-    مجوزها و Scopeهای کاربر را در Context جاری قرار می‌دهد.
+    مجوزها، Scopeها و محدوده مؤثر کاربر را در Context جاری می‌نشاند.
 
-    احراز هویت DRF بعد از میان‌افزار اجرا می‌شود، بنابراین تکمیل Context اینجا
-    انجام می‌گیرد.
+    میان‌افزار فقط هدرها را می‌خواند؛ کاربر هنوز شناخته نشده است، چون احراز
+    هویت DRF بعد از میان‌افزار اجرا می‌شود. پس تکمیل Context اینجا انجام
+    می‌گیرد و از لایه احراز هویت صدا زده می‌شود
+    (:mod:`apps.identity.authentication`) تا **هر** درخواست احرازشده — حتی
+    Viewهایی که `permission_classes` خودشان را جایگزین کرده‌اند — Context
+    کامل داشته باشد.
+
+    این تابع بی‌اثرِ تکرار است: بار دوم چیزی را دوباره محاسبه نمی‌کند.
     """
     ctx = get_current_context()
     if ctx is None:
@@ -75,6 +81,37 @@ def _hydrate_context_from_user(request) -> None:
         ctx.permissions = user.get_effective_permission_codes()
     if not ctx.scopes:
         ctx.scopes = user.get_effective_scopes()
+    if ctx.effective_scope is None:
+        from apps.identity.scopes import build_effective_scope
+
+        ctx.effective_scope = build_effective_scope(
+            ctx.scopes, is_superuser=ctx.is_superuser
+        )
+        _narrow_context_to_scope(ctx)
+
+
+def _narrow_context_to_scope(ctx) -> None:
+    """
+    هدرهای Context را با محدوده مجاز کاربر تطبیق می‌دهد.
+
+    هدر فقط اجازه دارد محدوده را **باریک‌تر** کند. اگر کلاینت شناسه‌ای بیرون
+    از محدوده مجاز بفرستد، به‌جای خطا نادیده گرفته می‌شود و فیلتر روی محدوده
+    مجاز خودِ کاربر می‌ماند؛ نتیجه‌اش «داده‌ای نیست» است، نه افشای داده.
+    خطاندادن عمدی است: پاسخ ۴۰۳ به شناسه معتبرِ خارج از دسترس، خودش وجود آن
+    مدرسه/شعبه را تأیید می‌کند.
+    """
+    scope = ctx.effective_scope
+    if scope is None or scope.is_unrestricted:
+        return
+
+    for dimension, attribute in (
+        ("schools", "school_id"),
+        ("campuses", "campus_id"),
+        ("academic_years", "academic_year_id"),
+    ):
+        requested = getattr(ctx, attribute, None)
+        if requested is not None and not scope.allows(dimension, requested):
+            setattr(ctx, attribute, None)
 
 
 class ScopedRBACPermission(BasePermission):
@@ -98,7 +135,7 @@ class ScopedRBACPermission(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        _hydrate_context_from_user(request)
+        hydrate_context_from_user(request)
 
         if user.is_superuser:
             return True

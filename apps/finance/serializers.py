@@ -562,23 +562,209 @@ class FamilyBalanceSerializer(serializers.Serializer):
 
 
 class LedgerRowSerializer(serializers.Serializer):
+    """یک ردیف گردش در دفتر کل."""
+
+    entryId = serializers.UUIDField()
+    lineId = serializers.UUIDField()
     entryNo = serializers.CharField()
     entryDate = serializers.DateField()
+    sourceType = serializers.CharField()
+    sourceTypeDisplay = serializers.CharField()
     description = serializers.CharField()
     costCenter = serializers.CharField(allow_null=True)
     debit = serializers.IntegerField()
     credit = serializers.IntegerField()
-    balance = serializers.IntegerField()
+    balance = serializers.IntegerField(help_text="مانده تجمعی تا همین ردیف")
 
 
-class AccountLedgerSerializer(serializers.Serializer):
-    """گردش حساب (بخش ۱۲.۲)."""
+class AccountBalanceMixinSerializer(serializers.Serializer):
+    """ستون‌های مشترک مانده و گردش یک حساب."""
 
+    accountId = serializers.UUIDField()
     accountCode = serializers.CharField()
     accountTitle = serializers.CharField()
+    accountType = serializers.CharField()
+    accountTypeDisplay = serializers.CharField()
     openingBalance = serializers.IntegerField()
+    openingDebit = serializers.IntegerField()
+    openingCredit = serializers.IntegerField()
+    periodDebit = serializers.IntegerField()
+    periodCredit = serializers.IntegerField()
     closingBalance = serializers.IntegerField()
+    closingDebit = serializers.IntegerField()
+    closingCredit = serializers.IntegerField()
+
+
+class LedgerAccountSerializer(AccountBalanceMixinSerializer):
+    """یک حساب در دفتر کل، به‌همراه ریز گردش آن."""
+
+    rowCount = serializers.IntegerField()
+    rowsTruncated = serializers.BooleanField(
+        help_text="اگر true باشد، ریز ردیف‌ها به سقف `max_rows` بریده شده‌اند."
+    )
     rows = LedgerRowSerializer(many=True)
+
+
+class AccountLedgerSerializer(LedgerAccountSerializer):
+    """گردش یک حساب (بخش ۱۲.۲)."""
+
+    dateFrom = serializers.DateField(allow_null=True)
+    dateTo = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+
+
+class GeneralLedgerTotalsSerializer(serializers.Serializer):
+    openingBalance = serializers.IntegerField()
+    periodDebit = serializers.IntegerField()
+    periodCredit = serializers.IntegerField()
+    closingBalance = serializers.IntegerField()
+    isBalanced = serializers.BooleanField()
+
+
+class GeneralLedgerSerializer(serializers.Serializer):
+    """دفتر کل (بخش ۱۴.۳)."""
+
+    dateFrom = serializers.DateField(allow_null=True)
+    dateTo = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+    accountCount = serializers.IntegerField()
+    totals = GeneralLedgerTotalsSerializer()
+    accounts = LedgerAccountSerializer(many=True)
+
+
+class TrialBalanceRowSerializer(serializers.Serializer):
+    accountId = serializers.UUIDField()
+    accountCode = serializers.CharField()
+    accountTitle = serializers.CharField()
+    accountType = serializers.CharField()
+    accountTypeDisplay = serializers.CharField()
+    openingDebit = serializers.IntegerField()
+    openingCredit = serializers.IntegerField()
+    periodDebit = serializers.IntegerField()
+    periodCredit = serializers.IntegerField()
+    closingDebit = serializers.IntegerField()
+    closingCredit = serializers.IntegerField()
+    closingBalance = serializers.IntegerField()
+
+
+class TrialBalanceTotalsSerializer(serializers.Serializer):
+    openingDebit = serializers.IntegerField()
+    openingCredit = serializers.IntegerField()
+    periodDebit = serializers.IntegerField()
+    periodCredit = serializers.IntegerField()
+    closingDebit = serializers.IntegerField()
+    closingCredit = serializers.IntegerField()
+    isBalanced = serializers.BooleanField(
+        help_text="در حسابداری دوبل باید همیشه true باشد."
+    )
+
+
+class TrialBalanceSerializer(serializers.Serializer):
+    """تراز آزمایشی شش‌ستونی (بخش ۱۴.۳)."""
+
+    dateFrom = serializers.DateField(allow_null=True)
+    dateTo = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+    rowCount = serializers.IntegerField()
+    totals = TrialBalanceTotalsSerializer()
+    rows = TrialBalanceRowSerializer(many=True)
+
+
+class StatementLineSerializer(serializers.Serializer):
+    accountId = serializers.UUIDField()
+    accountCode = serializers.CharField()
+    accountTitle = serializers.CharField()
+    accountType = serializers.CharField()
+    accountTypeDisplay = serializers.CharField()
+    amount = serializers.IntegerField()
+
+
+class StatementSectionSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    rows = StatementLineSerializer(many=True)
+
+
+class EquitySectionSerializer(StatementSectionSerializer):
+    retainedResult = serializers.IntegerField(
+        help_text="سود/زیان دوره که هنوز به حساب دائمی منتقل نشده است."
+    )
+
+
+class IncomeStatementSerializer(serializers.Serializer):
+    """صورت سود و زیان (بخش ۱۴.۳)."""
+
+    dateFrom = serializers.DateField(allow_null=True)
+    dateTo = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+    revenue = StatementSectionSerializer()
+    expense = StatementSectionSerializer()
+    netIncome = serializers.IntegerField()
+    netMarginPercent = serializers.FloatField(allow_null=True)
+
+
+class BalanceSheetSerializer(serializers.Serializer):
+    """صورت وضعیت مالی (بخش ۱۴.۳)."""
+
+    asOf = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+    asset = StatementSectionSerializer()
+    liability = StatementSectionSerializer()
+    equity = EquitySectionSerializer()
+    totalAssets = serializers.IntegerField()
+    totalLiabilitiesAndEquity = serializers.IntegerField()
+    difference = serializers.IntegerField()
+    isBalanced = serializers.BooleanField()
+
+
+class DaybookLineSerializer(serializers.Serializer):
+    accountCode = serializers.CharField()
+    accountTitle = serializers.CharField()
+    costCenter = serializers.CharField(allow_null=True)
+    description = serializers.CharField(allow_blank=True)
+    debit = serializers.IntegerField()
+    credit = serializers.IntegerField()
+
+
+class DaybookEntrySerializer(serializers.Serializer):
+    entryId = serializers.UUIDField()
+    entryNo = serializers.CharField()
+    entryDate = serializers.DateField()
+    description = serializers.CharField()
+    sourceType = serializers.CharField()
+    sourceTypeDisplay = serializers.CharField()
+    totalDebit = serializers.IntegerField()
+    totalCredit = serializers.IntegerField()
+    lines = DaybookLineSerializer(many=True)
+
+
+class DaybookSerializer(serializers.Serializer):
+    """دفتر روزنامه: اسناد قطعی به‌ترتیب تاریخ."""
+
+    dateFrom = serializers.DateField(allow_null=True)
+    dateTo = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+    entryCount = serializers.IntegerField()
+    totals = serializers.DictField(child=serializers.IntegerField())
+    entries = DaybookEntrySerializer(many=True)
+
+
+class CostCenterReportRowSerializer(serializers.Serializer):
+    costCenterId = serializers.UUIDField(allow_null=True)
+    costCenterCode = serializers.CharField(allow_blank=True)
+    costCenterTitle = serializers.CharField()
+    revenue = serializers.IntegerField()
+    expense = serializers.IntegerField()
+    net = serializers.IntegerField()
+
+
+class CostCenterReportSerializer(serializers.Serializer):
+    """درآمد و هزینه به تفکیک مرکز هزینه (بخش ۱۴.۳)."""
+
+    dateFrom = serializers.DateField(allow_null=True)
+    dateTo = serializers.DateField(allow_null=True)
+    currency = serializers.CharField()
+    totals = serializers.DictField(child=serializers.IntegerField())
+    rows = CostCenterReportRowSerializer(many=True)
 
 
 class ReceivablesAgingSerializer(serializers.Serializer):

@@ -838,38 +838,13 @@ def close_fiscal_year(fiscal_year: FiscalYear, actor_user_id) -> FiscalYear:
 
 
 def account_ledger(account: Account, date_from=None, date_to=None) -> dict:
-    """گردش حساب یک حساب در بازه (بخش ۱۲.۲ — Query «گردش حساب»)."""
-    lines = JournalLine.objects.filter(
-        account=account, journal_entry__status=JournalStatus.POSTED
-    ).select_related("journal_entry", "cost_center")
+    """
+    گردش حساب یک حساب در بازه (بخش ۱۲.۲ — Query «گردش حساب»).
 
-    if date_from:
-        lines = lines.filter(journal_entry__entry_date__gte=date_from)
-    if date_to:
-        lines = lines.filter(journal_entry__entry_date__lte=date_to)
+    پیاده‌سازی به :mod:`apps.finance.reports` منتقل شده تا دفتر کل، تراز
+    آزمایشی و گردش تک‌حساب از یک منطق محاسبه مشترک تغذیه شوند. این نام برای
+    فراخوانی‌های موجود حفظ شده است.
+    """
+    from apps.finance import reports
 
-    lines = lines.order_by("journal_entry__entry_date", "journal_entry__entry_no")
-
-    rows = []
-    running = 0
-    for line in lines:
-        running += line.debit_amount - line.credit_amount
-        rows.append(
-            {
-                "entryNo": line.journal_entry.entry_no,
-                "entryDate": line.journal_entry.entry_date,
-                "description": line.description or line.journal_entry.description,
-                "costCenter": line.cost_center.title if line.cost_center else None,
-                "debit": line.debit_amount,
-                "credit": line.credit_amount,
-                "balance": running,
-            }
-        )
-
-    return {
-        "accountCode": account.code,
-        "accountTitle": account.title,
-        "openingBalance": 0,
-        "closingBalance": running,
-        "rows": rows,
-    }
+    return reports.account_ledger(account, date_from, date_to)

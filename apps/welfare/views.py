@@ -101,6 +101,8 @@ class HealthProfileViewSet(BaseModelViewSet):
     filterset_fields = ("student", "blood_type", "confidentiality_level")
     search_fields = ("student__student_no", "student__person__last_name")
     permission_resource = "health"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
 
 
 @extend_schema_view(
@@ -112,6 +114,8 @@ class HealthAlertViewSet(BaseModelViewSet):
     serializer_class = HealthAlertSerializer
     filterset_fields = ("health_profile", "alert_type", "severity", "status")
     permission_resource = "health"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
     permission_map = {"for_class": "attendance.read"}
 
     @extend_schema(
@@ -159,6 +163,8 @@ class HealthIncidentViewSet(BaseModelViewSet):
     serializer_class = HealthIncidentSerializer
     filterset_fields = ("student", "outcome")
     permission_resource = "health"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
 
     def perform_create(self, serializer):
         from apps.workflow.services import notify_student_guardians
@@ -200,6 +206,8 @@ class CounselingCaseViewSet(BaseModelViewSet):
         "referral_source",
     )
     permission_resource = "counseling"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
 
     @extend_schema(
         tags=["Welfare"],
@@ -267,6 +275,8 @@ class BehaviorIncidentViewSet(BaseModelViewSet):
     serializer_class = BehaviorIncidentSerializer
     filterset_class = BehaviorIncidentFilter
     permission_resource = "behavior"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_student_field = "student"
     permission_map = {
         "investigate": "behavior.update",
         "decide": "behavior.resolve",
@@ -438,6 +448,8 @@ class LibraryLoanViewSet(BaseModelViewSet):
     serializer_class = LibraryLoanSerializer
     filterset_class = LibraryLoanFilter
     permission_resource = "library"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    self_person_field = "borrower_person"
     permission_map = {
         "create_loan": "library.loan",
         "return_loan": "library.return",
@@ -593,6 +605,9 @@ class TransportRouteViewSet(BaseModelViewSet):
     filterset_fields = ("campus", "direction", "status")
     search_fields = ("code", "title")
     permission_resource = "transport"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
 
 
 @extend_schema_view(list=extend_schema(tags=["Welfare"], summary="ایستگاه‌های مسیر"))
@@ -601,6 +616,9 @@ class RouteStopViewSet(BaseModelViewSet):
     serializer_class = RouteStopSerializer
     filterset_fields = ("route",)
     permission_resource = "transport"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "route__campus__school"
+    campus_field = "route__campus"
 
 
 @extend_schema_view(
@@ -622,6 +640,10 @@ class StudentRouteAssignmentViewSet(BaseModelViewSet):
     serializer_class = StudentRouteAssignmentSerializer
     filterset_fields = ("student", "route", "status")
     permission_resource = "transport"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "route__campus__school"
+    campus_field = "route__campus"
+    self_student_field = "student"
     permission_map = {"create": "transport.assign"}
 
     def perform_create(self, serializer):
@@ -666,6 +688,9 @@ class RouteRunViewSet(BaseModelViewSet):
     serializer_class = RouteRunSerializer
     filterset_fields = ("route", "vehicle", "run_date", "direction", "status")
     permission_resource = "transport"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "route__campus__school"
+    campus_field = "route__campus"
     permission_map = {"manifest": "transport.read", "depart": "transport.update", "complete": "transport.update"}
 
     @extend_schema(
@@ -769,6 +794,9 @@ class RidershipEventViewSet(BaseModelViewSet):
     serializer_class = RidershipEventSerializer
     filterset_fields = ("route_run", "student", "event_type", "source")
     permission_resource = "transport"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "route_run__route__campus__school"
+    campus_field = "route_run__route__campus"
 
     def perform_create(self, serializer):
         from apps.workflow.services import notify_student_guardians

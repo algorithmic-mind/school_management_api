@@ -97,6 +97,8 @@ class QuestionBankViewSet(BaseModelViewSet):
     filterset_fields = ("school", "course", "visibility", "status")
     search_fields = ("title",)
     permission_resource = "question"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(list=extend_schema(tags=["Assessment"], summary="برچسب‌های سؤال"))
@@ -106,6 +108,8 @@ class QuestionTagViewSet(BaseModelViewSet):
     filterset_fields = ("school", "tag_type")
     search_fields = ("value",)
     permission_resource = "question"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 class QuestionFilter(filters.FilterSet):
@@ -148,6 +152,8 @@ class QuestionViewSet(BaseModelViewSet):
     filterset_class = QuestionFilter
     search_fields = ("versions__body",)
     permission_resource = "question"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "bank__school"
     permission_map = {
         "create_with_version": "question.create",
         "new_version": "question.update",
@@ -296,6 +302,8 @@ class QuestionVersionViewSet(BaseModelViewSet):
     serializer_class = QuestionVersionSerializer
     filterset_fields = ("question", "review_status", "difficulty", "grade_level")
     permission_resource = "question"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "question__bank__school"
 
     def perform_create(self, serializer):
         question = serializer.validated_data["question"]
@@ -311,6 +319,8 @@ class QuestionOptionViewSet(BaseModelViewSet):
     serializer_class = QuestionOptionSerializer
     filterset_fields = ("question_version", "is_correct")
     permission_resource = "question"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "question_version__question__bank__school"
 
 
 class ExamFilter(filters.FilterSet):
@@ -344,6 +354,12 @@ class ExamViewSet(BaseModelViewSet):
     filterset_class = ExamFilter
     search_fields = ("code", "title")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
     permission_map = {
         "submit_for_review": "exam.update",
         "approve": "exam.publish",
@@ -506,6 +522,12 @@ class ExamSectionViewSet(BaseModelViewSet):
     serializer_class = ExamSectionSerializer
     filterset_fields = ("exam",)
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "exam__course_offering__course__school"
+    campus_field = "exam__course_offering__class_group__campus"
+    academic_year_field = "exam__course_offering__term__academic_year"
+    class_group_field = "exam__course_offering__class_group"
+    course_offering_field = "exam__course_offering"
 
 
 @extend_schema_view(
@@ -523,6 +545,11 @@ class ExamQuestionViewSet(BaseModelViewSet):
     serializer_class = ExamQuestionSerializer
     filterset_fields = ("section", "question_version")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "question_version__question__bank__school"
+    campus_field = "section__exam__course_offering__class_group__campus"
+    class_group_field = "section__exam__course_offering__class_group"
+    course_offering_field = "section__exam__course_offering"
 
 
 @extend_schema_view(
@@ -536,6 +563,12 @@ class ExamSessionViewSet(BaseModelViewSet):
     serializer_class = ExamSessionSerializer
     filterset_fields = ("exam", "room", "status")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "exam__course_offering__course__school"
+    campus_field = "exam__course_offering__class_group__campus"
+    academic_year_field = "exam__course_offering__term__academic_year"
+    class_group_field = "exam__course_offering__class_group"
+    course_offering_field = "exam__course_offering"
     permission_map = {"open": "exam.update", "close": "exam.update", "enroll_class": "exam.update"}
 
     @extend_schema(
@@ -610,6 +643,13 @@ class ExamRegistrationViewSet(BaseModelViewSet):
     serializer_class = ExamRegistrationSerializer
     filterset_fields = ("exam_session", "enrollment", "registration_status")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "enrollment__campus__school"
+    campus_field = "enrollment__campus"
+    academic_year_field = "enrollment__academic_year"
+    class_group_field = "exam_session__exam__course_offering__class_group"
+    course_offering_field = "exam_session__exam__course_offering"
+    self_student_field = "enrollment__student"
 
 
 @extend_schema_view(
@@ -631,6 +671,13 @@ class ExamAttemptViewSet(BaseReadOnlyViewSet):
     serializer_class = ExamAttemptSerializer
     filterset_fields = ("registration", "status")
     permission_resource = "attempt"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "registration__enrollment__campus__school"
+    campus_field = "registration__enrollment__campus"
+    academic_year_field = "registration__enrollment__academic_year"
+    class_group_field = "registration__exam_session__exam__course_offering__class_group"
+    course_offering_field = "registration__exam_session__exam__course_offering"
+    self_student_field = "registration__enrollment__student"
     throttle_scope = "exam_attempt"
     permission_map = {
         "start": "attempt.start",
@@ -873,6 +920,11 @@ class AttemptAnswerViewSet(BaseModelViewSet):
     serializer_class = AttemptAnswerSerializer
     filterset_fields = ("attempt", "exam_question", "grading_status")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "attempt__registration__enrollment__campus__school"
+    campus_field = "attempt__registration__enrollment__campus"
+    academic_year_field = "attempt__registration__enrollment__academic_year"
+    self_student_field = "attempt__registration__enrollment__student"
     permission_map = {"manual_grade": "exam.grade"}
     http_method_names = ["get", "post", "head", "options"]
 
@@ -917,6 +969,10 @@ class ProctorEventViewSet(BaseModelViewSet):
     serializer_class = ProctorEventSerializer
     filterset_fields = ("attempt", "event_type", "severity")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "attempt__registration__enrollment__campus__school"
+    campus_field = "attempt__registration__enrollment__campus"
+    academic_year_field = "attempt__registration__enrollment__academic_year"
 
 
 @extend_schema_view(list=extend_schema(tags=["Assessment"], summary="بازبینی‌های نمره"))
@@ -925,6 +981,9 @@ class GradeReviewViewSet(BaseReadOnlyViewSet):
     serializer_class = GradeReviewSerializer
     filterset_fields = ("attempt_answer", "review_type")
     permission_resource = "exam"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    campus_field = "attempt_answer__attempt__registration__enrollment__campus"
+    academic_year_field = "attempt_answer__attempt__registration__enrollment__academic_year"
 
 
 @extend_schema_view(
@@ -942,6 +1001,11 @@ class GradeAppealViewSet(BaseModelViewSet):
     serializer_class = GradeAppealSerializer
     filterset_fields = ("attempt", "status")
     permission_resource = "appeal"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "attempt__registration__enrollment__campus__school"
+    campus_field = "attempt__registration__enrollment__campus"
+    academic_year_field = "attempt__registration__enrollment__academic_year"
+    self_student_field = "attempt__registration__enrollment__student"
     permission_map = {"resolve": "appeal.resolve"}
 
     def perform_create(self, serializer):

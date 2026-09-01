@@ -11,7 +11,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
-#: قرارداد OpenAPI ۹۰۹ عملیات دارد و ساختش چند ثانیه طول می‌کشد؛ بدون Cache،
+#: قرارداد OpenAPI ۹۲۷ عملیات دارد و ساختش چند ثانیه طول می‌کشد؛ بدون Cache،
 #: هر بار بازکردن Swagger همان هزینه را دوباره می‌دهد.
 _schema_view = cache_page(settings.SCHEMA_CACHE_SECONDS)(
     SpectacularAPIView.as_view()

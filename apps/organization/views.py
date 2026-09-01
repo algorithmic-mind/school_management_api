@@ -77,6 +77,8 @@ class SchoolViewSet(BaseModelViewSet):
     filterset_fields = ("school_type", "status")
     search_fields = ("name", "code")
     permission_resource = "school"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "id"
 
 
 @extend_schema_view(
@@ -90,6 +92,8 @@ class CampusViewSet(BaseModelViewSet):
     filterset_fields = ("school", "status")
     search_fields = ("name", "code")
     permission_resource = "campus"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(
@@ -108,6 +112,8 @@ class AcademicYearViewSet(BaseModelViewSet):
     search_fields = ("title",)
     ordering_fields = ("starts_on", "title")
     permission_resource = "academic_year"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
     permission_map = {
         "activate": "academic_year.activate",
         "close": "academic_year.close",
@@ -230,6 +236,9 @@ class TermViewSet(BaseModelViewSet):
     filterset_fields = ("academic_year", "status")
     ordering_fields = ("sequence_no", "starts_on")
     permission_resource = "academic_year"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "academic_year__school"
+    academic_year_field = "academic_year"
 
 
 @extend_schema_view(
@@ -242,6 +251,8 @@ class GradeLevelViewSet(BaseModelViewSet):
     filterset_fields = ("school", "status", "stage")
     ordering_fields = ("sequence_no", "title")
     permission_resource = "grade_level"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(list=extend_schema(tags=["Organization"], summary="فهرست رشته‌ها"))
@@ -251,6 +262,8 @@ class StudyProgramViewSet(BaseModelViewSet):
     filterset_fields = ("school", "status")
     search_fields = ("title", "code")
     permission_resource = "course"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(
@@ -263,6 +276,8 @@ class CourseViewSet(BaseModelViewSet):
     filterset_fields = ("school", "status", "assessment_scheme")
     search_fields = ("title", "code")
     permission_resource = "course"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 @extend_schema_view(
@@ -277,6 +292,8 @@ class ProgramCourseViewSet(BaseModelViewSet):
     serializer_class = ProgramCourseSerializer
     filterset_fields = ("program", "grade_level", "course", "is_required")
     permission_resource = "course"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course__school"
 
 
 @extend_schema_view(list=extend_schema(tags=["Organization"], summary="فهرست اتاق‌ها"))
@@ -286,6 +303,9 @@ class RoomViewSet(BaseModelViewSet):
     filterset_fields = ("campus", "room_type", "status")
     search_fields = ("code", "title", "building")
     permission_resource = "room"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
 
 
 class ClassGroupFilter(filters.FilterSet):
@@ -337,8 +357,11 @@ class ClassGroupViewSet(BaseModelViewSet):
     filterset_class = ClassGroupFilter
     search_fields = ("code", "title")
     permission_resource = "class_group"
-    academic_year_field = "academic_year"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
     campus_field = "campus"
+    academic_year_field = "academic_year"
+    class_group_field = "id"
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -396,6 +419,12 @@ class CourseOfferingViewSet(BaseModelViewSet):
     serializer_class = CourseOfferingSerializer
     filterset_fields = ("class_group", "term", "course", "status")
     permission_resource = "class_group"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course__school"
+    campus_field = "class_group__campus"
+    academic_year_field = "term__academic_year"
+    class_group_field = "class_group"
+    course_offering_field = "id"
 
     @extend_schema(
         tags=["Organization"],
@@ -447,6 +476,12 @@ class ScheduleEntryViewSet(BaseModelViewSet):
     )
     ordering_fields = ("weekday", "starts_at")
     permission_resource = "schedule"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "course_offering__course__school"
+    campus_field = "course_offering__class_group__campus"
+    academic_year_field = "course_offering__term__academic_year"
+    class_group_field = "course_offering__class_group"
+    course_offering_field = "course_offering"
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -488,3 +523,6 @@ class CalendarEventViewSet(BaseModelViewSet):
     filterset_fields = ("school", "campus", "academic_year", "event_type", "is_working_day")
     ordering_fields = ("starts_on",)
     permission_resource = "academic_year"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
+    academic_year_field = "academic_year"

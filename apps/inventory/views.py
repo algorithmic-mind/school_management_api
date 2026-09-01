@@ -111,6 +111,8 @@ class ItemCategoryViewSet(BaseModelViewSet):
     filterset_fields = ("school", "parent")
     search_fields = ("code", "title")
     permission_resource = "item"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "school"
 
 
 class ItemFilter(filters.FilterSet):
@@ -156,6 +158,8 @@ class ItemViewSet(BaseModelViewSet):
     filterset_class = ItemFilter
     search_fields = ("sku", "title", "barcode")
     permission_resource = "item"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "category__school"
 
     @extend_schema(
         tags=["Inventory"],
@@ -194,6 +198,9 @@ class WarehouseViewSet(BaseModelViewSet):
     filterset_fields = ("campus", "status")
     search_fields = ("code", "title")
     permission_resource = "stock"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
 
 
 class StockBalanceFilter(filters.FilterSet):
@@ -236,6 +243,9 @@ class StockBalanceViewSet(BaseReadOnlyViewSet):
     filterset_class = StockBalanceFilter
     search_fields = ("item__sku", "item__title", "lot_no")
     permission_resource = "stock"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "item__category__school"
+    campus_field = "warehouse__campus"
 
 
 class StockDocumentFilter(filters.FilterSet):
@@ -264,6 +274,9 @@ class StockDocumentViewSet(BaseModelViewSet):
     filterset_class = StockDocumentFilter
     search_fields = ("document_no", "description")
     permission_resource = "stock"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "warehouse__campus__school"
+    campus_field = "warehouse__campus"
     permission_map = {
         "confirm": "stock.receive",
         "reverse": "stock.adjust",
@@ -335,6 +348,9 @@ class StockDocumentLineViewSet(BaseModelViewSet):
     serializer_class = StockDocumentLineSerializer
     filterset_fields = ("stock_document", "item")
     permission_resource = "stock"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "item__category__school"
+    campus_field = "stock_document__warehouse__campus"
 
 
 @extend_schema_view(
@@ -350,6 +366,9 @@ class StockMovementViewSet(BaseReadOnlyViewSet):
     filterset_fields = ("item", "warehouse", "lot_no", "serial_no")
     ordering_fields = ("occurred_at",)
     permission_resource = "stock"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "item__category__school"
+    campus_field = "warehouse__campus"
 
 
 @extend_schema_view(
@@ -364,6 +383,9 @@ class PurchaseRequestViewSet(BaseModelViewSet):
     filterset_fields = ("campus", "status", "requester_user_id")
     search_fields = ("request_no", "title")
     permission_resource = "purchase_request"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "campus__school"
+    campus_field = "campus"
     permission_map = {
         "submit": "purchase_request.submit",
         "approve": "purchase_request.approve",
@@ -442,6 +464,9 @@ class PurchaseRequestLineViewSet(BaseModelViewSet):
     serializer_class = PurchaseRequestLineSerializer
     filterset_fields = ("request", "item")
     permission_resource = "purchase_request"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "item__category__school"
+    campus_field = "request__campus"
 
 
 @extend_schema_view(
@@ -567,6 +592,8 @@ class PurchaseOrderLineViewSet(BaseModelViewSet):
     serializer_class = PurchaseOrderLineSerializer
     filterset_fields = ("order", "item")
     permission_resource = "purchase_order"
+    # -- دامنه دسترسی: مسیر ORM این منبع تا هر بُعد محدوده --
+    school_field = "item__category__school"
 
 
 @extend_schema_view(

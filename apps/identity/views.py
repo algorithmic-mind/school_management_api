@@ -22,6 +22,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.core.exceptions import BusinessRuleViolation
+from apps.core.permissions import ScopeType
 from apps.core.pagination import AuditCursorPagination
 from apps.core.serializers import ErrorResponseSerializer, OperationResultSerializer, ReasonSerializer
 from apps.core.viewsets import BaseModelViewSet, BaseReadOnlyViewSet
@@ -32,6 +33,7 @@ from apps.identity.enums import (
     RoleAssignmentStatus,
     UserStatus,
 )
+from apps.identity import password_reset
 from apps.identity.filters import (
     AuditLogFilter,
     PersonFilter,
@@ -61,6 +63,7 @@ from apps.identity.serializers import (
     CurrentUserSerializer,
     LoginSerializer,
     PasswordChangeSerializer,
+    PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     PermissionSerializer,
     PersonAddressSerializer,
@@ -72,6 +75,8 @@ from apps.identity.serializers import (
     UserAccountCreateSerializer,
     UserAccountSerializer,
     UserRoleAssignmentSerializer,
+    VersionedTokenRefreshSerializer,
+    WorkingContextSerializer,
 )
 from apps.identity.services import record_audit
 
@@ -83,6 +88,14 @@ ERROR_RESPONSES = {
     409: OpenApiResponse(ErrorResponseSerializer, description="تعارض وضعیت یا نسخه"),
     422: OpenApiResponse(ErrorResponseSerializer, description="نقض قاعده کسب‌وکار"),
 }
+
+
+def _request_ip(request) -> str | None:
+    """نشانی واقعی کلاینت، با احترام به هدر Proxy."""
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or None
+    return request.META.get("REMOTE_ADDR") or None
 
 
 # ===========================================================================
@@ -142,29 +155,57 @@ class LoginView(APIView):
     throttle_scope = "auth"
     serializer_class = LoginSerializer
 
+    #: خطای ورود ناموفق همیشه یکسان است تا وجود یا نبود حساب افشا نشود
+    #: (بخش ۱۵.۱). قفل‌بودن حساب هم با همین پیام برنمی‌گردد، چون خودش نشانه
+    #: وجود حساب است؛ فقط کد پاسخ فرق می‌کند.
+    GENERIC_FAILURE = "نام کاربری یا رمز عبور درست نیست."
+
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         username = serializer.validated_data["username"]
         password = serializer.validated_data["password"]
 
-        user = authenticate(request, username=username, password=password)
+        account = UserAccount.objects.filter(username=username).first()
 
-        if user is None:
-            # شمارنده خطا برای سیاست قفل هوشمند؛ پیام پاسخ همچنان عمومی است
-            # تا وجود یا نبود حساب افشا نشود (بخش ۱۵.۱).
-            UserAccount.objects.filter(username=username).update(
-                failed_login_count=F("failed_login_count") + 1
-            )
+        # قفل موقت پیش از بررسی رمز کنترل می‌شود؛ وگرنه مهاجم می‌تواند در طول
+        # مدت قفل هم به آزمودن رمزها ادامه دهد.
+        if account is not None and account.is_locked_out:
             record_audit(
                 action=AuditAction.LOGIN_FAILED,
                 entity_type="identity.UserAccount",
+                entity_id=account.id,
                 entity_label=username,
+                reason="تلاش ورود روی حساب قفل‌شده",
+                actor_username=username,
+            )
+            raise BusinessRuleViolation(
+                code="ACCOUNT_LOCKED",
+                message=(
+                    "این حساب به‌دلیل تلاش‌های ناموفق موقتاً قفل شده است؛ "
+                    "کمی بعد دوباره تلاش کنید."
+                ),
+                # قفل موقت است، پس فرانت می‌تواند «بعداً دوباره تلاش کنید» را
+                # نشان دهد، نه «با پشتیبانی تماس بگیرید».
+                retryable=True,
+                status_code=status.HTTP_423_LOCKED,
+            )
+
+        user = authenticate(request, username=username, password=password)
+
+        if user is None:
+            locked = account.register_failed_login() if account else False
+            record_audit(
+                action=AuditAction.LOGIN_FAILED,
+                entity_type="identity.UserAccount",
+                entity_id=account.id if account else None,
+                entity_label=username,
+                reason="قفل حساب پس از تلاش‌های ناموفق" if locked else "",
                 actor_username=username,
             )
             raise BusinessRuleViolation(
                 code="AUTHENTICATION_FAILED",
-                message="نام کاربری یا رمز عبور درست نیست.",
+                message=self.GENERIC_FAILURE,
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
 
@@ -178,10 +219,7 @@ class LoginView(APIView):
         from apps.identity.serializers import ContextTokenObtainPairSerializer
 
         refresh = ContextTokenObtainPairSerializer.get_token(user)
-
-        user.last_login_at = timezone.now()
-        user.failed_login_count = 0
-        user.save(update_fields=["last_login_at", "failed_login_count"])
+        user.register_successful_login(_request_ip(request))
 
         record_audit(
             action=AuditAction.LOGIN,
@@ -209,25 +247,43 @@ class LoginView(APIView):
 @extend_schema(
     tags=["Auth"],
     summary="تازه‌سازی توکن دسترسی",
-    description="با ارسال `refresh` معتبر، توکن `access` جدید دریافت می‌شود.",
+    description=(
+        "با ارسال `refresh` معتبر، توکن `access` تازه دریافت می‌شود.\n\n"
+        "اگر نشست باطل شده باشد (خروج، تغییر رمز، ابطال توسط مدیر)، پاسخ ۴۰۱ "
+        "با کد `token_revoked` است؛ فرانت باید کاربر را به صفحه ورود ببرد و "
+        "دوباره تلاش نکند."
+    ),
+    responses={
+        200: OpenApiResponse(description="توکن دسترسی تازه"),
+        401: OpenApiResponse(
+            ErrorResponseSerializer, description="Refresh نامعتبر، منقضی یا باطل‌شده"
+        ),
+    },
 )
 class RefreshTokenView(TokenRefreshView):
     permission_classes = [AllowAny]
     authentication_classes = []
     throttle_scope = "auth"
+    serializer_class = VersionedTokenRefreshSerializer
 
 
 @extend_schema(
     tags=["Auth"],
     summary="خروج از سامانه",
-    description="توکن refresh باطل می‌شود و رخداد خروج ممیزی می‌گردد.",
+    description=(
+        "همه توکن‌های در گردش کاربر — هم `access` و هم `refresh`، روی همه "
+        "دستگاه‌ها — بلافاصله باطل می‌شوند و رخداد خروج ممیزی می‌گردد.\n\n"
+        "ابطال با جلوبردن نسخه توکن انجام می‌شود، پس نیازی به ارسال بدنه یا "
+        "نگهداری فهرست سیاه نیست. فرانت باید توکن‌های ذخیره‌شده را پاک کند."
+    ),
     request=None,
-    responses={200: OperationResultSerializer},
+    responses={200: OperationResultSerializer, 401: ErrorResponseSerializer},
 )
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        request.user.revoke_tokens()
         record_audit(
             action=AuditAction.LOGOUT,
             entity_type="identity.UserAccount",
@@ -235,7 +291,9 @@ class LogoutView(APIView):
             entity_label=request.user.username,
             actor_username=request.user.username,
         )
-        return Response({"success": True, "message": "خروج انجام شد."})
+        return Response(
+            {"success": True, "message": "خروج انجام شد و نشست‌های فعال باطل شدند."}
+        )
 
 
 @extend_schema(
@@ -328,8 +386,8 @@ class CurrentUserView(APIView):
         "به نام کاربری).\n"
         "- پس از موفقیت، `mustChangePassword` صفر می‌شود و رخداد در ممیزی ثبت "
         "می‌گردد.\n"
-        "- توکن‌های صادرشده پیش از تغییر رمز، تا پایان عمر خودشان معتبر می‌مانند؛ "
-        "ابطال سمت سرور در این نسخه پیاده‌سازی نشده است."
+        "- همه توکن‌های صادرشده پیش از تغییر رمز بلافاصله باطل می‌شوند "
+        "(بخش ۱۵.۱)، پس کاربر باید با رمز جدید دوباره وارد شود."
     ),
     request=PasswordChangeSerializer,
     responses={200: OperationResultSerializer, 400: ErrorResponseSerializer},
@@ -364,6 +422,9 @@ class PasswordChangeView(APIView):
         user.save(
             update_fields=["password", "must_change_password", "password_changed_at"]
         )
+        # بخش ۱۵.۱: تغییر رمز، نشست‌های پیشین را باطل می‌کند — وگرنه کسی که با
+        # رمز قدیمی توکن گرفته، تا نیم‌ساعت بعد هنوز داخل سامانه است.
+        user.revoke_tokens()
         record_audit(
             action=AuditAction.UPDATE,
             entity_type="identity.UserAccount",
@@ -372,7 +433,12 @@ class PasswordChangeView(APIView):
             reason="تغییر رمز عبور توسط کاربر",
             actor_username=user.username,
         )
-        return Response({"success": True, "message": "رمز عبور تغییر کرد."})
+        return Response(
+            {
+                "success": True,
+                "message": "رمز عبور تغییر کرد؛ برای ادامه دوباره وارد شوید.",
+            }
+        )
 
 
 @extend_schema(
@@ -393,13 +459,304 @@ class PasswordResetRequestView(APIView):
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # ارسال واقعی از طریق ماژول workflow انجام می‌شود.
+
+        account = password_reset.find_account(serializer.validated_data["identifier"])
+        if account is not None:
+            uid, token = password_reset.build_token(account)
+            _deliver_reset_link(account, uid, token)
+            record_audit(
+                action=AuditAction.UPDATE,
+                entity_type="identity.UserAccount",
+                entity_id=account.id,
+                entity_label=account.username,
+                reason="درخواست بازیابی رمز عبور",
+                actor_username=account.username,
+            )
+
         return Response(
             {
                 "success": True,
                 "message": "اگر حسابی با این مشخصات وجود داشته باشد، راهنمای بازیابی ارسال می‌شود.",
             }
         )
+
+
+def _deliver_reset_link(account, uid: str, token: str) -> None:
+    """
+    لینک بازیابی را از کانال ترجیحی کاربر می‌فرستد.
+
+    خطای ارسال نباید پاسخ را تغییر دهد؛ وگرنه تفاوت زمان یا نتیجه پاسخ، خودش
+    وجود حساب را لو می‌دهد (بخش ۱۵.۱).
+    """
+    import logging
+
+    link = password_reset.build_reset_link(uid, token)
+    if account.person_id is None:
+        logging.getLogger(__name__).warning(
+            "بازیابی رمز برای حساب بدون شخص مرتبط؛ پیام ارسال نشد: %s",
+            account.username,
+        )
+        return
+
+    try:
+        from apps.core.enums import NotificationChannel
+        from apps.workflow.enums import NotificationPriority
+        from apps.workflow.services import queue_notification
+
+        channel = (
+            NotificationChannel.SMS if account.mobile else NotificationChannel.EMAIL
+        )
+        queue_notification(
+            recipient_person=account.person,
+            channel=channel,
+            subject="بازیابی رمز عبور",
+            body=(
+                f"برای تعیین رمز تازه این نشانی را باز کنید: {link}\n"
+                "اگر شما درخواست نداده‌اید، این پیام را نادیده بگیرید."
+            ),
+            priority=NotificationPriority.TRANSACTIONAL,
+            deep_link=link,
+            related_type="identity.UserAccount",
+            related_id=account.id,
+            tenant_id=account.tenant_id,
+        )
+    except Exception:  # pragma: no cover - ارسال نباید مسیر اصلی را بشکند
+        logging.getLogger(__name__).exception("ارسال پیام بازیابی رمز ناموفق بود.")
+
+
+@extend_schema(
+    tags=["Auth"],
+    summary="تعیین رمز تازه با توکن بازیابی",
+    description=(
+        "`uid` و `token` را از پارامترهای لینک بازیابی بردارید و همراه رمز "
+        "تازه بفرستید.\n\n"
+        "- توکن یک‌بارمصرف است و با نخستین استفاده موفق باطل می‌شود.\n"
+        "- عمر توکن از `PASSWORD_RESET_TIMEOUT` می‌آید (پیش‌فرض ۲ ساعت).\n"
+        "- پس از موفقیت، همه نشست‌های فعال کاربر باطل می‌شوند.\n"
+        "- خطای توکن نامعتبر و منقضی یکسان است تا اطلاعاتی درباره حساب فاش نشود."
+    ),
+    request=PasswordResetConfirmSerializer,
+    responses={
+        200: OperationResultSerializer,
+        400: OpenApiResponse(
+            ErrorResponseSerializer, description="توکن نامعتبر یا رمز ضعیف"
+        ),
+    },
+)
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = "password_reset"
+
+    def post(self, request):
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        account = password_reset.resolve_token(data["uid"], data["token"])
+        if account is None:
+            raise BusinessRuleViolation(
+                code="INVALID_RESET_TOKEN",
+                message="لینک بازیابی نامعتبر یا منقضی شده است؛ دوباره درخواست دهید.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_password(data["new_password"], account)
+        except DjangoValidationError as error:
+            raise BusinessRuleViolation(
+                code="WEAK_PASSWORD",
+                message=" ".join(error.messages),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        account.set_password(data["new_password"])
+        account.must_change_password = False
+        account.password_changed_at = timezone.now()
+        account.failed_login_count = 0
+        account.locked_until = None
+        if account.status == UserStatus.LOCKED:
+            account.status = UserStatus.ACTIVE
+        account.save(
+            update_fields=[
+                "password",
+                "must_change_password",
+                "password_changed_at",
+                "failed_login_count",
+                "locked_until",
+                "status",
+            ]
+        )
+        account.revoke_tokens()
+
+        record_audit(
+            action=AuditAction.UPDATE,
+            entity_type="identity.UserAccount",
+            entity_id=account.id,
+            entity_label=account.username,
+            reason="بازیابی رمز عبور با توکن",
+            actor_username=account.username,
+        )
+        return Response(
+            {"success": True, "message": "رمز عبور تعیین شد؛ اکنون وارد شوید."}
+        )
+
+
+@extend_schema(
+    tags=["Auth"],
+    summary="ابطال همه نشست‌های من",
+    description=(
+        "همه توکن‌های در گردش کاربر روی همه دستگاه‌ها باطل می‌شوند — همان "
+        "دکمه «خروج از همه دستگاه‌ها» (بخش ۱۵.۱).\n\n"
+        "توکن خودِ همین درخواست هم باطل می‌شود، پس فرانت باید بلافاصله کاربر "
+        "را به صفحه ورود ببرد."
+    ),
+    request=None,
+    responses={200: OperationResultSerializer, 401: ErrorResponseSerializer},
+)
+class RevokeSessionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        request.user.revoke_tokens()
+        record_audit(
+            action=AuditAction.LOGOUT,
+            entity_type="identity.UserAccount",
+            entity_id=request.user.id,
+            entity_label=request.user.username,
+            reason="ابطال دستی همه نشست‌ها",
+            actor_username=request.user.username,
+        )
+        return Response(
+            {"success": True, "message": "همه نشست‌های فعال شما باطل شدند."}
+        )
+
+
+@extend_schema(
+    tags=["Auth"],
+    summary="محیط‌های کاری من",
+    description=(
+        "داده کامل صفحه «انتخاب مدرسه، شعبه و سال» (بخش ۵.۲ سند فرانت).\n\n"
+        "برخلاف `contexts` در `/auth/me/` که فقط شناسه دامنه را می‌دهد، اینجا "
+        "نام خواندنی هر دامنه و هدرهایی که باید فرستاده شوند هم می‌آید:\n\n"
+        "- `contexts[].scopeTitle`: نام مدرسه/شعبه/سال برای نمایش در فهرست.\n"
+        "- `contexts[].schoolId` و `campusId` و `academicYearId`: دقیقاً همان "
+        "مقادیری که باید در هدرهای Context برود.\n"
+        "- `defaultContext`: اگر فقط یک محیط کاری وجود داشته باشد، فرانت صفحه "
+        "انتخاب را Skip می‌کند و همین را به کار می‌برد.\n"
+        "- `schools`: فهرست مدارس در دسترس، برای Dropdown بالای صفحه."
+    ),
+    responses={200: WorkingContextSerializer, 401: ErrorResponseSerializer},
+)
+class WorkingContextView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    #: نگاشت نوع دامنه به هدری که فرانت باید بفرستد.
+    SCOPE_HEADERS = {
+        ScopeType.SCHOOL: "schoolId",
+        ScopeType.CAMPUS: "campusId",
+        ScopeType.ACADEMIC_YEAR: "academicYearId",
+    }
+
+    def get(self, request):
+        from apps.organization.models import AcademicYear, Campus, School
+
+        user = request.user
+        assignments = user.get_effective_scopes()
+
+        # نام دامنه‌ها یک‌جا خوانده می‌شود تا در حلقه Query تکراری نزنیم.
+        ids_by_type: dict[str, set] = {}
+        for assignment in assignments:
+            if assignment["scope_id"]:
+                ids_by_type.setdefault(assignment["scope_type"], set()).add(
+                    assignment["scope_id"]
+                )
+
+        titles: dict[str, dict] = {}
+        for scope_type, model, field in (
+            (ScopeType.SCHOOL, School, "name"),
+            (ScopeType.CAMPUS, Campus, "name"),
+            (ScopeType.ACADEMIC_YEAR, AcademicYear, "title"),
+        ):
+            wanted = ids_by_type.get(scope_type)
+            if not wanted:
+                continue
+            titles[scope_type] = {
+                str(item.pk): item for item in model.objects.filter(pk__in=wanted)
+            }
+
+        scope_labels = dict(ScopeType.CHOICES)
+        contexts = []
+        for assignment in assignments:
+            scope_type = assignment["scope_type"]
+            scope_id = assignment["scope_id"]
+            target = titles.get(scope_type, {}).get(str(scope_id)) if scope_id else None
+
+            entry = {
+                "roleCode": assignment["role__code"],
+                "roleTitle": assignment["role__title"],
+                "scopeType": scope_type,
+                "scopeTypeDisplay": scope_labels.get(scope_type, scope_type),
+                "scopeId": scope_id,
+                "scopeTitle": str(target) if target else "",
+                "schoolId": None,
+                "campusId": None,
+                "academicYearId": None,
+            }
+            header_field = self.SCOPE_HEADERS.get(scope_type)
+            if header_field and scope_id:
+                entry[header_field] = scope_id
+            # شعبه و سال تحصیلی، مدرسه خودشان را هم تعیین می‌کنند؛ فرانت لازم
+            # نیست برای پرکردن هدر X-School-Id درخواست جداگانه بزند.
+            if target is not None and scope_type in {
+                ScopeType.CAMPUS,
+                ScopeType.ACADEMIC_YEAR,
+            }:
+                entry["schoolId"] = target.school_id
+            contexts.append(entry)
+
+        schools = self._accessible_schools(request, School)
+
+        return Response(
+            WorkingContextSerializer(
+                {
+                    "defaultContext": contexts[0] if len(contexts) == 1 else None,
+                    "contexts": contexts,
+                    "schools": schools,
+                    "headers": {
+                        "school": "X-School-Id",
+                        "campus": "X-Campus-Id",
+                        "academicYear": "X-Academic-Year-Id",
+                    },
+                }
+            ).data
+        )
+
+    @staticmethod
+    def _accessible_schools(request, School) -> list[dict]:
+        """مدارسی که کاربر با نقش‌های فعلی‌اش به آن‌ها دسترسی دارد."""
+        from apps.core.context import get_current_context
+
+        queryset = School.objects.all()
+        ctx = get_current_context()
+        if ctx and ctx.tenant_id:
+            queryset = queryset.filter(tenant_id=ctx.tenant_id)
+
+        scope = getattr(ctx, "effective_scope", None) if ctx else None
+        if scope is not None and not scope.is_unrestricted:
+            allowed = scope.dimension("schools")
+            if allowed is not None:
+                if not allowed:
+                    return []
+                queryset = queryset.filter(pk__in=allowed)
+
+        return [
+            {"id": str(school.pk), "name": school.name, "code": school.code}
+            for school in queryset.order_by("name")
+        ]
 
 
 # ===========================================================================
@@ -584,6 +941,10 @@ class UserAccountViewSet(BaseModelViewSet):
     filterset_class = UserAccountFilter
     search_fields = ("username", "email", "mobile", "person__first_name", "person__last_name")
     permission_resource = "user"
+    permission_map = {
+        "unlock": "user.disable",
+        "revoke_sessions": "user.disable",
+    }
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -604,6 +965,8 @@ class UserAccountViewSet(BaseModelViewSet):
         user.status = UserStatus.DISABLED
         user.is_active = False
         user.save(update_fields=["status", "is_active"])
+        # بدون ابطال، توکن معتبرِ همین کاربر تا نیم‌ساعت بعد هنوز کار می‌کند.
+        user.revoke_tokens()
         record_audit(
             action=AuditAction.PERMISSION_CHANGE,
             entity_type="identity.UserAccount",
@@ -616,12 +979,15 @@ class UserAccountViewSet(BaseModelViewSet):
     @extend_schema(
         tags=["IAM"],
         summary="فعال‌سازی مجدد حساب",
+        description="وضعیت به «فعال» برمی‌گردد و قفل و شمارنده تلاش ناموفق پاک می‌شود.",
         request=ReasonSerializer,
-        responses={200: UserAccountSerializer},
+        responses={200: UserAccountSerializer, **ERROR_RESPONSES},
     )
     @action(detail=True, methods=["post"], url_path="enable")
     def enable(self, request, pk=None):
         user = self.get_object()
+        body = ReasonSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
         user.status = UserStatus.ACTIVE
         user.is_active = True
         user.locked_until = None
@@ -629,7 +995,71 @@ class UserAccountViewSet(BaseModelViewSet):
         user.save(
             update_fields=["status", "is_active", "locked_until", "failed_login_count"]
         )
+        record_audit(
+            action=AuditAction.PERMISSION_CHANGE,
+            entity_type="identity.UserAccount",
+            entity_id=user.id,
+            entity_label=user.username,
+            reason=body.validated_data["reason"],
+        )
         return Response(UserAccountSerializer(user).data)
+
+    @extend_schema(
+        tags=["IAM"],
+        summary="بازکردن قفل حساب",
+        description=(
+            "قفل موقتِ ناشی از تلاش‌های ناموفق ورود را برمی‌دارد، بدون آنکه "
+            "وضعیت حساب را تغییر دهد. حسابی که مدیر عمداً غیرفعال کرده با این "
+            "Endpoint فعال نمی‌شود؛ برای آن `enable/` را صدا بزنید."
+        ),
+        request=ReasonSerializer,
+        responses={200: UserAccountSerializer, **ERROR_RESPONSES},
+    )
+    @action(detail=True, methods=["post"], url_path="unlock")
+    def unlock(self, request, pk=None):
+        user = self.get_object()
+        body = ReasonSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        user.locked_until = None
+        user.failed_login_count = 0
+        if user.status == UserStatus.LOCKED:
+            user.status = UserStatus.ACTIVE
+        user.save(update_fields=["locked_until", "failed_login_count", "status"])
+        record_audit(
+            action=AuditAction.PERMISSION_CHANGE,
+            entity_type="identity.UserAccount",
+            entity_id=user.id,
+            entity_label=user.username,
+            reason=body.validated_data["reason"],
+        )
+        return Response(UserAccountSerializer(user).data)
+
+    @extend_schema(
+        tags=["IAM"],
+        summary="ابطال نشست‌های کاربر",
+        description=(
+            "همه توکن‌های در گردش کاربر باطل می‌شوند — برای وقتی که دستگاهی "
+            "گم شده یا دسترسی مشکوکی دیده شده است (بخش ۱۵.۱)."
+        ),
+        request=ReasonSerializer,
+        responses={200: OperationResultSerializer, **ERROR_RESPONSES},
+    )
+    @action(detail=True, methods=["post"], url_path="revoke-sessions")
+    def revoke_sessions(self, request, pk=None):
+        user = self.get_object()
+        body = ReasonSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        user.revoke_tokens()
+        record_audit(
+            action=AuditAction.PERMISSION_CHANGE,
+            entity_type="identity.UserAccount",
+            entity_id=user.id,
+            entity_label=user.username,
+            reason=body.validated_data["reason"],
+        )
+        return Response(
+            {"success": True, "message": "همه نشست‌های این کاربر باطل شدند."}
+        )
 
 
 @extend_schema_view(

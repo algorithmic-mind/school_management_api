@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
@@ -255,6 +257,16 @@ class UserAccount(UUIDModel, AbstractBaseUser, PermissionsMixin):
     locked_until = models.DateTimeField(null=True, blank=True)
     last_login_at = models.DateTimeField(null=True, blank=True)
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
+    token_version = models.PositiveIntegerField(
+        default=1,
+        verbose_name=_("نسخه توکن"),
+        help_text=_(
+            "بخش ۱۵.۱: «تغییر رمز یا نقش حساس، Sessionهای پرریسک را باطل "
+            "می‌کند». این عدد در هر توکن صادرشده می‌نشیند و لایه احراز هویت "
+            "توکنی را که نسخه‌اش کهنه است رد می‌کند. یک واحد افزایش = ابطال "
+            "فوری همه توکن‌های در گردش این کاربر."
+        ),
+    )
 
     is_staff = models.BooleanField(default=False, verbose_name=_("دسترسی پنل مدیریت"))
     is_active = models.BooleanField(default=True)
@@ -313,6 +325,63 @@ class UserAccount(UUIDModel, AbstractBaseUser, PermissionsMixin):
         if self.is_superuser:
             return True
         return code in self.get_effective_permission_codes()
+
+    # -- امنیت حساب (بخش ۱۵.۱) -------------------------------------------
+    @property
+    def is_locked_out(self) -> bool:
+        """قفل موقت پس از تلاش‌های ناموفق، هنوز منقضی نشده است."""
+        return bool(self.locked_until and self.locked_until > timezone.now())
+
+    def register_failed_login(self) -> bool:
+        """
+        یک تلاش ناموفق را می‌شمارد و در صورت عبور از آستانه، حساب را قفل می‌کند.
+
+        خروجی: آیا همین تلاش منجر به قفل‌شدن شد.
+
+        شمارنده روی خود رکورد افزایش می‌یابد (نه `F()`) تا بلافاصله بتوان درباره
+        عبور از آستانه تصمیم گرفت؛ نرخ ورود ناموفق آن‌قدر پایین است که رقابت
+        هم‌زمان روی این شمارنده مسئله‌ای نسازد.
+        """
+        from django.conf import settings
+
+        threshold = getattr(settings, "AUTH_MAX_FAILED_LOGINS", 5)
+        minutes = getattr(settings, "AUTH_LOCKOUT_MINUTES", 15)
+
+        self.failed_login_count = (self.failed_login_count or 0) + 1
+        fields = ["failed_login_count"]
+        locked = False
+        if threshold and self.failed_login_count >= threshold:
+            self.locked_until = timezone.now() + timedelta(minutes=minutes)
+            fields.append("locked_until")
+            locked = True
+        self.save(update_fields=fields)
+        return locked
+
+    def register_successful_login(self, ip: str | None = None) -> None:
+        """ورود موفق: صفرکردن شمارنده خطا و برداشتن قفل موقت."""
+        self.last_login_at = timezone.now()
+        self.failed_login_count = 0
+        self.locked_until = None
+        self.last_login_ip = ip or None
+        self.save(
+            update_fields=[
+                "last_login_at",
+                "failed_login_count",
+                "locked_until",
+                "last_login_ip",
+            ]
+        )
+
+    def revoke_tokens(self) -> int:
+        """
+        همه توکن‌های در گردش این کاربر را باطل می‌کند.
+
+        با یک واحد جلوبردن `token_version`، هر توکن قبلی در نخستین درخواست بعدی
+        رد می‌شود — بدون نیاز به فهرست سیاه و بدون انتظار تا انقضای طبیعی توکن.
+        """
+        self.token_version = (self.token_version or 0) + 1
+        self.save(update_fields=["token_version"])
+        return self.token_version
 
 
 class Permission(UUIDModel):
